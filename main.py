@@ -6,11 +6,11 @@ from .utils import *
 import time
 
 @register(
-    "spectrecorepro",
-    "ReedSein",
+    "spectrecore",
+    "23q3",
     "SpectreCore Pro: 融合了上下文增强的主动回复插件",
-    "2.1.9",
-    "https://github.com/ReedSein/astrbot_plugin_SpectreCorePro"
+    "2.1.11",
+    "https://github.com/23q3/astrbot_plugin_SpectreCore"
 )
 class SpectreCore(Star):
     
@@ -62,21 +62,18 @@ class SpectreCore(Star):
 
     def _is_explicit_trigger(self, event: AstrMessageEvent) -> bool:
         """判断是否为显式触发（被动回复）"""
-        # 私聊 = 显式
         if event.message_obj.type == EventMessageType.PRIVATE_MESSAGE:
             return True
         
         bot_self_id = event.get_self_id()
         if not bot_self_id: return False
         
-        # 检查组件 (@Bot 或 引用)
         for comp in event.message_obj.message:
             if isinstance(comp, At) and (str(comp.qq) == str(bot_self_id) or comp.qq == "all"):
                 return True
             elif isinstance(comp, Reply):
                 return True
         
-        # 兜底：检查文本
         msg_text = event.get_message_outline() or ""
         if f"@{bot_self_id}" in msg_text:
             return True
@@ -88,7 +85,6 @@ class SpectreCore(Star):
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
         
-        # 替换变量
         instruction = template.replace("{sender_name}", str(sender_name))
         instruction = instruction.replace("{sender_id}", str(sender_id))
         instruction = instruction.replace("{original_prompt}", str(original_prompt))
@@ -101,7 +97,6 @@ class SpectreCore(Star):
         """
         try:
             # 1. 获取历史记录 (由 LLMUtils 准备并挂载)
-            # 这里的 history_str 应该是 "以下是最近的聊天记录：\n[...]"
             history_str = getattr(event, "_spectre_history", "")
             
             # 2. 获取当前消息 (LLMUtils 已经将其设置为纯净的当前消息)
@@ -110,8 +105,10 @@ class SpectreCore(Star):
             # 3. 选择模板
             if self._is_explicit_trigger(event):
                 template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
+                log_tag = "被动回复"
             else:
                 template = self.config.get("active_speech_instruction", self.DEFAULT_ACTIVE_INSTRUCTION)
+                log_tag = "主动插话"
 
             # 4. 生成指令部分 (包含当前消息)
             instruction = self._format_instruction(template, event, current_msg)
@@ -125,8 +122,11 @@ class SpectreCore(Star):
             # 6. 应用
             req.prompt = final_prompt
             
-            # Debug: 打印前50个字符确认历史记录在最前面
-            # logger.info(f"[SpectreCore Pro] Final Prompt Head: {final_prompt[:50].replace(chr(10), ' ')}...")
+            # --- 调试输出：显示注入的 User Prompt ---
+            logger.info("="*30 + f" [SpectreCore Pro] Prompt 预览 ({log_tag}) " + "="*30)
+            logger.info(f"\n{final_prompt}")
+            logger.info("="*80)
+            # ------------------------------------
 
             # 清理
             if hasattr(event, "_spectre_history"):
