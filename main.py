@@ -41,42 +41,42 @@ class SpectreCore(Star):
             logger.error(f"处理私聊消息错误: {e}")
             
     async def _process_message(self, event: AstrMessageEvent):
-        # 1. 保存历史记录 (无条件保存)
+        # 1. 保存历史记录
         await HistoryStorage.process_and_save_user_message(event)
 
-        # 2. 简单的空消息过滤，但放宽对组件消息（如纯图片/@）的限制
-        message_outline = event.get_message_outline() or ""
+        # 2. 放宽空消息检查 (允许纯图片/表情/引用触发)
         has_components = bool(getattr(event.message_obj, 'message', []))
+        message_outline = event.get_message_outline() or ""
         
-        # 既无文本也无组件才跳过
         if not message_outline.strip() and not has_components:
             return
 
-        # 3. 决策是否回复
+        # 3. 决策回复
         if ReplyDecision.should_reply(event, self.config):
             async for result in ReplyDecision.process_and_reply(event, self.config, self.context):
                 yield result
 
     # -------------------------------------------------------------------------
-    # 核心逻辑：Prompt 组装 (SpectreCore Pro Feature)
+    # 核心逻辑：Prompt 组装
     # -------------------------------------------------------------------------
 
     def _is_explicit_trigger(self, event: AstrMessageEvent) -> bool:
         """判断是否为显式触发（被动回复）"""
+        # 私聊 = 显式
         if event.message_obj.type == EventMessageType.PRIVATE_MESSAGE:
             return True
         
         bot_self_id = event.get_self_id()
         if not bot_self_id: return False
         
-        # 检查组件
+        # 检查组件 (@Bot 或 引用)
         for comp in event.message_obj.message:
             if isinstance(comp, At) and (str(comp.qq) == str(bot_self_id) or comp.qq == "all"):
                 return True
             elif isinstance(comp, Reply):
                 return True
         
-        # 兜底：检查文本是否包含 @Bot
+        # 兜底：检查文本
         msg_text = event.get_message_outline() or ""
         if f"@{bot_self_id}" in msg_text:
             return True
@@ -88,6 +88,7 @@ class SpectreCore(Star):
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
         
+        # 替换变量
         instruction = template.replace("{sender_name}", str(sender_name))
         instruction = instruction.replace("{sender_id}", str(sender_id))
         instruction = instruction.replace("{original_prompt}", str(original_prompt))
@@ -96,39 +97,38 @@ class SpectreCore(Star):
     @filter.on_llm_request(priority=90)
     async def on_llm_request_custom(self, event: AstrMessageEvent, req: ProviderRequest):
         """
-        【核心 Hook】
-        组装逻辑：User Prompt = [历史记录] + \n\n + [套用模板后的当前消息]
+        【核心 Hook】确保 Prompt 结构：[历史记录] -> [指令+当前消息]
         """
         try:
-            # 1. 获取 LLMUtils 准备好的历史记录 (从 event 挂载点读取)
+            # 1. 获取历史记录 (由 LLMUtils 准备并挂载)
+            # 这里的 history_str 应该是 "以下是最近的聊天记录：\n[...]"
             history_str = getattr(event, "_spectre_history", "")
             
-            # 2. 获取当前原始消息 (req.prompt 此时已被 LLMUtils 设置为当前消息)
-            current_msg = req.prompt or ""
+            # 2. 获取当前消息 (LLMUtils 已经将其设置为纯净的当前消息)
+            current_msg = req.prompt or "[图片/非文本消息]"
             
-            # 3. 判断场景并选择模板
+            # 3. 选择模板
             if self._is_explicit_trigger(event):
                 template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
-                log_tag = "被动回复"
             else:
                 template = self.config.get("active_speech_instruction", self.DEFAULT_ACTIVE_INSTRUCTION)
-                log_tag = "主动插话"
 
-            # 4. 格式化当前指令
+            # 4. 生成指令部分 (包含当前消息)
             instruction = self._format_instruction(template, event, current_msg)
             
-            # 5. 最终组装：历史在前，指令在后
+            # 5. 强制拼接：历史记录 必须在 最前面
             if history_str:
                 final_prompt = f"{history_str}\n\n{instruction}"
             else:
                 final_prompt = instruction
                 
-            # 6. 应用到请求
+            # 6. 应用
             req.prompt = final_prompt
             
-            # logger.debug(f"[SpectreCore Pro] ({log_tag}) Prompt组装完成。")
+            # Debug: 打印前50个字符确认历史记录在最前面
+            # logger.info(f"[SpectreCore Pro] Final Prompt Head: {final_prompt[:50].replace(chr(10), ' ')}...")
 
-            # 清理挂载属性
+            # 清理
             if hasattr(event, "_spectre_history"):
                 delattr(event, "_spectre_history")
 
@@ -175,12 +175,7 @@ class SpectreCore(Star):
 
     @spectrecore.command("help")
     async def help(self, event: AstrMessageEvent):
-        yield event.plain_result(
-            "SpectreCore Pro: \n"
-            "/sc reset [群号] - 重置历史\n"
-            "/sc mute [分钟] - 临时闭嘴\n"
-            "/sc history - 查看历史"
-        )
+        yield event.plain_result("SpectreCore Pro: \n/sc reset - 重置历史\n/sc mute [分] - 闭嘴")
         
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("reset")
@@ -196,28 +191,7 @@ class SpectreCore(Star):
             if HistoryStorage.clear_history(platform, is_priv, target_id):
                 yield event.plain_result("历史记录已重置。")
             else:
-                yield event.plain_result("重置失败或无记录。")
-        except Exception as e:
-            yield event.plain_result(f"错误: {e}")
-    
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @spectrecore.command("history")
-    async def history(self, event: AstrMessageEvent, count: int = 10):
-        try:
-            platform = event.get_platform_name()
-            is_priv = event.is_private_chat()
-            target_id = event.get_group_id() if not is_priv else event.get_sender_id()
-            history = HistoryStorage.get_history(platform, is_priv, target_id)
-            if not history:
-                yield event.plain_result("无历史记录。")
-                return
-                
-            recent = history[-min(count, 20):]
-            fmt_history = await MessageUtils.format_history_for_llm(recent)
-            if len(fmt_history) > 3000:
-                yield event.image_result(await self.text_to_image(fmt_history))
-            else:
-                yield event.plain_result(fmt_history)
+                yield event.plain_result("重置失败。")
         except Exception as e:
             yield event.plain_result(f"错误: {e}")
 
