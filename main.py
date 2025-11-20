@@ -41,35 +41,50 @@ class SpectreCore(Star):
             logger.error(f"处理私聊消息错误: {e}")
             
     async def _process_message(self, event: AstrMessageEvent):
-        message_outline = event.get_message_outline()
-        if not message_outline or message_outline.strip() == "":
-            return
-
+        # 1. 保存历史记录 (无条件保存)
         await HistoryStorage.process_and_save_user_message(event)
 
+        # 2. 简单的空消息过滤，但放宽对组件消息（如纯图片/@）的限制
+        message_outline = event.get_message_outline() or ""
+        has_components = bool(getattr(event.message_obj, 'message', []))
+        
+        # 既无文本也无组件才跳过
+        if not message_outline.strip() and not has_components:
+            return
+
+        # 3. 决策是否回复
         if ReplyDecision.should_reply(event, self.config):
             async for result in ReplyDecision.process_and_reply(event, self.config, self.context):
                 yield result
 
     # -------------------------------------------------------------------------
-    # 核心逻辑：Prompt 组装
+    # 核心逻辑：Prompt 组装 (SpectreCore Pro Feature)
     # -------------------------------------------------------------------------
 
     def _is_explicit_trigger(self, event: AstrMessageEvent) -> bool:
         """判断是否为显式触发（被动回复）"""
         if event.message_obj.type == EventMessageType.PRIVATE_MESSAGE:
             return True
+        
         bot_self_id = event.get_self_id()
         if not bot_self_id: return False
         
+        # 检查组件
         for comp in event.message_obj.message:
             if isinstance(comp, At) and (str(comp.qq) == str(bot_self_id) or comp.qq == "all"):
                 return True
             elif isinstance(comp, Reply):
                 return True
+        
+        # 兜底：检查文本是否包含 @Bot
+        msg_text = event.get_message_outline() or ""
+        if f"@{bot_self_id}" in msg_text:
+            return True
+            
         return False
 
     def _format_instruction(self, template: str, event: AstrMessageEvent, original_prompt: str) -> str:
+        """格式化提示词模板"""
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
         
@@ -82,24 +97,22 @@ class SpectreCore(Star):
     async def on_llm_request_custom(self, event: AstrMessageEvent, req: ProviderRequest):
         """
         【核心 Hook】
-        组装顺序：
-        1. 获取 LLMUtils 准备好的历史记录 (req.prompt 此时只有当前消息)
-        2. 根据主动/被动选择模板
-        3. 将当前消息套入模板
-        4. 最终 User Prompt = 历史记录 + "\n\n" + 格式化后的指令
+        组装逻辑：User Prompt = [历史记录] + \n\n + [套用模板后的当前消息]
         """
         try:
-            # 1. 获取原始 Prompt (当前消息)
-            current_msg = req.prompt or ""
-            
-            # 2. 获取挂载的历史记录 (由 LLMUtils 准备)
+            # 1. 获取 LLMUtils 准备好的历史记录 (从 event 挂载点读取)
             history_str = getattr(event, "_spectre_history", "")
+            
+            # 2. 获取当前原始消息 (req.prompt 此时已被 LLMUtils 设置为当前消息)
+            current_msg = req.prompt or ""
             
             # 3. 判断场景并选择模板
             if self._is_explicit_trigger(event):
                 template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
+                log_tag = "被动回复"
             else:
                 template = self.config.get("active_speech_instruction", self.DEFAULT_ACTIVE_INSTRUCTION)
+                log_tag = "主动插话"
 
             # 4. 格式化当前指令
             instruction = self._format_instruction(template, event, current_msg)
@@ -110,20 +123,20 @@ class SpectreCore(Star):
             else:
                 final_prompt = instruction
                 
-            # 6. 应用
+            # 6. 应用到请求
             req.prompt = final_prompt
             
-            # 清理挂载属性（可选）
+            # logger.debug(f"[SpectreCore Pro] ({log_tag}) Prompt组装完成。")
+
+            # 清理挂载属性
             if hasattr(event, "_spectre_history"):
                 delattr(event, "_spectre_history")
-                
-            # logger.debug(f"[SpectreCore Pro] Prompt组装完成，长度: {len(final_prompt)}")
 
         except Exception as e:
             logger.error(f"[SpectreCore Pro] Prompt 组装失败: {e}")
 
     # -------------------------------------------------------------------------
-    # 辅助功能 (Bot消息记录、大模型后处理等)
+    # 辅助功能
     # -------------------------------------------------------------------------
 
     @filter.after_message_sent()
@@ -162,12 +175,16 @@ class SpectreCore(Star):
 
     @spectrecore.command("help")
     async def help(self, event: AstrMessageEvent):
-        yield event.plain_result("SpectreCore Pro: 请查看 GitHub 文档或使用 /sc reset 重置历史。")
+        yield event.plain_result(
+            "SpectreCore Pro: \n"
+            "/sc reset [群号] - 重置历史\n"
+            "/sc mute [分钟] - 临时闭嘴\n"
+            "/sc history - 查看历史"
+        )
         
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("reset")
     async def reset(self, event: AstrMessageEvent, group_id: str = None):
-        # 简化的 reset 逻辑
         try:
             platform = event.get_platform_name()
             if group_id:
@@ -182,6 +199,41 @@ class SpectreCore(Star):
                 yield event.plain_result("重置失败或无记录。")
         except Exception as e:
             yield event.plain_result(f"错误: {e}")
+    
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @spectrecore.command("history")
+    async def history(self, event: AstrMessageEvent, count: int = 10):
+        try:
+            platform = event.get_platform_name()
+            is_priv = event.is_private_chat()
+            target_id = event.get_group_id() if not is_priv else event.get_sender_id()
+            history = HistoryStorage.get_history(platform, is_priv, target_id)
+            if not history:
+                yield event.plain_result("无历史记录。")
+                return
+                
+            recent = history[-min(count, 20):]
+            fmt_history = await MessageUtils.format_history_for_llm(recent)
+            if len(fmt_history) > 3000:
+                yield event.image_result(await self.text_to_image(fmt_history))
+            else:
+                yield event.plain_result(fmt_history)
+        except Exception as e:
+            yield event.plain_result(f"错误: {e}")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @spectrecore.command("mute")
+    async def mute(self, event: AstrMessageEvent, minutes: int = 5):
+        self.config.setdefault("_temp_mute", {})["until"] = time.time() + (minutes * 60)
+        self.config.save_config()
+        yield event.plain_result(f"闭嘴 {minutes} 分钟。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @spectrecore.command("unmute")
+    async def unmute(self, event: AstrMessageEvent):
+        if "_temp_mute" in self.config: del self.config["_temp_mute"]
+        self.config.save_config()
+        yield event.plain_result("解除闭嘴。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("callllm")
