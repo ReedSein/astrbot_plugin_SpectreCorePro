@@ -6,11 +6,11 @@ from .utils import *
 import time
 
 @register(
-    "spectrecore",
-    "23q3",
+    "spectrecorepro",
+    "ReedSein",
     "SpectreCore Pro: 融合了上下文增强的主动回复插件",
-    "2.1.11",
-    "https://github.com/23q3/astrbot_plugin_SpectreCore"
+    "2.1.9",
+    "https://github.com/ReedSein/astrbot_plugin_SpectreCorePro"
 )
 class SpectreCore(Star):
     
