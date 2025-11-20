@@ -1,7 +1,7 @@
-name: spectrecore # 这是你的插件的唯一识别名。
-desc: 使大模型更好的主动回复群聊中的消息，带来生动和沉浸的群聊对话体验 # 插件简短描述
+name: spectrecorepro # 这是你的插件的唯一识别名。
+desc: 生动沉浸式罗莎 # 插件简短描述
 help: 自动检测群聊消息并让AI模型进行回复，让群聊更加生动有趣。 # 插件的帮助信息
-version: v2.1.7 # 插件版本号。格式：v1.1.1 或者 v1.1
-author: 23q3 # 作者
-repo: https://github.com/23q3/astrbot_plugin_SpectreCore # 插件的仓库地址
-display_name: 🌟 SpectreCore
+version: v2.1.9 # 插件版本号。格式：v1.1.1 或者 v1.1
+author: ReedSein # 作者
+repo: https://github.com/ReedSein/astrbot_plugin_SpectreCorePro # 插件的仓库地址
+display_name: 🌟 SpectreCorePro
