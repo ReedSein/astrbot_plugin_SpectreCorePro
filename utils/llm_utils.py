@@ -9,8 +9,7 @@ from .persona_utils import PersonaUtils
 
 class LLMUtils:
     """
-    大模型调用工具类 (Clean Version)
-    只负责准备数据，不污染 prompt 字段。
+    大模型调用工具类 (Rosa Edition)
     """
     
     _llm_call_status: Dict[str, Dict[str, Any]] = {}
@@ -40,21 +39,21 @@ class LLMUtils:
 
     @staticmethod
     async def call_llm(event: AstrMessageEvent, config: AstrBotConfig, context: Context) -> ProviderRequest:
-        """
-        构建调用请求
-        """
         platform_name = event.get_platform_name()
         is_private = event.is_private_chat()
         chat_id = event.get_group_id() if not is_private else event.get_sender_id()
         
-        # 1. 构建 System Prompt (人设、环境、指令)
+        # 1. 构建 System Prompt
         system_parts = []
         
-        # 基础环境
-        bot_name = "AstrBot"
+        # 【修改点】基础环境名称设为 Rosa
+        bot_name = "Rosa"
         if platform_name == "aiocqhttp" and hasattr(event, "bot"):
             try:
-                bot_name = (await event.bot.api.get_login_info())["nickname"]
+                # 即使平台返回其他名字，也优先使用 Rosa，或者保留平台昵称？
+                # 既然用户强制要求叫 Rosa，这里就强制使用 Rosa
+                # bot_name = (await event.bot.api.get_login_info())["nickname"]
+                pass 
             except: pass
             
         env_info = f"你的ID: {event.get_self_id()}, 名字: {bot_name}。"
@@ -77,8 +76,8 @@ class LLMUtils:
             except Exception as e:
                 logger.error(f"加载人设失败: {e}")
 
-        # 功能指令
-        instruction = "\n\n【规则】\n1. 你的名字在聊天记录中显示为 'AstrBot'。\n2. 请勿重复自己的名字作为回复开头。"
+        # 【修改点】功能指令中的名字设为 Rosa
+        instruction = "\n\n【规则】\n1. 你的名字在聊天记录中显示为 'Rosa'。\n2. 请勿重复自己的名字作为回复开头。"
         if config.get("read_air", False):
             instruction += "\n3. 若无需回复（如话题与你无关），请严格输出 <NO_RESPONSE>。"
         else:
@@ -87,7 +86,7 @@ class LLMUtils:
 
         final_system_prompt = "\n\n".join(system_parts)
 
-        # 2. 准备历史记录 (挂载)
+        # 2. 准备历史记录
         history_str = ""
         try:
             limit = config.get("group_msg_history", 10)
@@ -104,20 +103,30 @@ class LLMUtils:
         # 挂载到 Event
         setattr(event, "_spectre_history", history_str)
 
-        # 3. 准备 User Prompt (仅当前消息)
+        # 3. 准备 User Prompt
         current_msg = event.get_message_outline() or "[非文本消息]"
 
         # 4. 图片处理
         image_urls = []
         if config.get("image_processing", {}).get("image_count", 0) > 0 and msgs:
-            # (简化的图片提取逻辑，这里省略详细提取以保持代码简洁，沿用之前逻辑即可)
-            # 如果需要提取历史图片，请在此处实现
-            pass
+            msgs_to_check = msgs[-limit:] if len(msgs) > limit else msgs
+            for msg in reversed(msgs_to_check):
+                if hasattr(msg, "message") and msg.message:
+                    for comp in msg.message:
+                        if isinstance(comp, Image) and comp.file:
+                            image_urls.append(comp.file)
+                            if len(image_urls) >= config.get("image_processing", {}).get("image_count"): break
+                if len(image_urls) >= config.get("image_processing", {}).get("image_count"): break
+            
+            if image_urls:
+                final_system_prompt += f"\n\n[System]: 上下文中包含了最近的 {len(image_urls)} 张图片供参考。"
 
         # 5. 发起请求
-        # 注意：prompt 参数只传入 current_msg，不含历史
+        func_tools_mgr = context.get_llm_tool_manager() if config.get("use_func_tool", False) else None
+
         return event.request_llm(
             prompt=current_msg, 
+            func_tool_manager=func_tools_mgr,
             contexts=contexts,
             system_prompt=final_system_prompt, 
             image_urls=image_urls, 
