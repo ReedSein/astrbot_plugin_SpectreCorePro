@@ -21,18 +21,15 @@ class ReplyDecision:
             
             # 2. 检查锁 (防止并发)
             if LLMUtils.is_llm_in_progress(platform_name, is_private, chat_id):
-                # logger.debug("[SpectreCore] 锁：当前已有请求在处理中")
                 return False
             
             # 3. 检查静默 (Mute)
             mute_info = config.get("_temp_mute", {})
             if mute_info and mute_info.get("until", 0) > time.time():
-                # logger.debug("[SpectreCore] 静默：当前处于 mute 状态")
                 return False
 
-            # 4. 检查启用状态 (核心修复：类型安全转换)
+            # 4. 检查启用状态 (类型安全转换)
             if not ReplyDecision._is_chat_enabled(event, config):
-                # logger.debug(f"[SpectreCore] 未启用：当前群组/私聊未在配置中开启")
                 return False
 
             # 5. 检查黑名单
@@ -42,7 +39,7 @@ class ReplyDecision:
                 return False
 
             # ===========================================
-            # 6. @检测 (最高优先级)
+            # 6. @检测 (最高优先级 - 强制回复)
             # ===========================================
             if ReplyDecision._is_at_me(event):
                 logger.info(f"[SpectreCore] 触发：检测到被 @ (ChatID: {chat_id})")
@@ -56,11 +53,9 @@ class ReplyDecision:
                 return True
             
             # 8. 概率回复 (读空气)
-            # 如果是私聊，默认必定回复
             if is_private:
                 return True
                 
-            # 检查是否开启概率回复
             method = freq_config.get("method", "概率回复")
             if method == "概率回复":
                 probability = freq_config.get("probability", {}).get("probability", 0.0)
@@ -76,9 +71,7 @@ class ReplyDecision:
 
     @staticmethod
     def _is_chat_enabled(event: AstrMessageEvent, config: AstrBotConfig) -> bool:
-        """
-        检查当前会话是否开启 (类型安全版)
-        """
+        """检查当前会话是否开启 (类型安全版)"""
         if event.is_private_chat():
             return config.get("enabled_private", False)
         
@@ -90,25 +83,21 @@ class ReplyDecision:
 
     @staticmethod
     def _is_at_me(event: AstrMessageEvent) -> bool:
-        """
-        检查是否被 @
-        """
+        """检查是否被 @"""
         try:
-            # 私聊默认视为被 @
             if event.is_private_chat():
                 return True
 
             bot_self_id = str(event.get_self_id() or "")
             
-            # 1. 检查消息组件 (标准方式)
+            # 1. 检查消息组件
             if hasattr(event.message_obj, 'message'):
                 for comp in event.message_obj.message:
                     if isinstance(comp, At):
                         if str(comp.qq) == bot_self_id or comp.qq == "all":
                             return True
             
-            # 2. 文本模糊匹配 (兜底方式，防止组件解析失败)
-            # 很多适配器通过 text 传递 @，例如 "@123456 "
+            # 2. 文本模糊匹配 (兜底)
             msg_text = event.get_message_outline() or ""
             if f"@{bot_self_id}" in msg_text:
                 return True
@@ -124,3 +113,16 @@ class ReplyDecision:
             if kw in msg_text:
                 return True
         return False
+        
+    @staticmethod
+    async def process_and_reply(event: AstrMessageEvent, config: AstrBotConfig, context: Context):
+        platform_name = event.get_platform_name()
+        is_private = event.is_private_chat()
+        chat_id = event.get_sender_id() if is_private else event.get_group_id()
+
+        LLMUtils.set_llm_in_progress(platform_name, is_private, chat_id)
+
+        try:
+            yield await LLMUtils.call_llm(event, config, context)
+        finally:
+            LLMUtils.set_llm_in_progress(platform_name, is_private, chat_id, False)
