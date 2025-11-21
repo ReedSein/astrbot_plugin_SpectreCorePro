@@ -19,7 +19,7 @@ except ImportError:
 @register(
     "spectrecorepro",
     "ReedSein",
-    "SpectreCore Pro: 融合上下文增强、主动回复与深度转发分析的全能助理",
+    "SpectreCore Pro: 融合上下文增强、主动回复与深度转发分析的全能罗莎",
     "2.2.0",
     "https://github.com/ReedSein/astrbot_plugin_SpectreCorePro"
 )
@@ -104,6 +104,10 @@ class SpectreCore(Star):
         
         # 加载 Forward Reader 配置
         self.enable_forward_analysis = self.config.get("enable_forward_analysis", True) # 总开关
+        # 细分开关：控制触发条件
+        self.fr_enable_direct = self.config.get("fr_enable_direct", False) # 默认关闭直接转发分析
+        self.fr_enable_reply = self.config.get("fr_enable_reply", True)    # 默认开启引用分析
+        
         self.fr_max_retries = self.config.get("fr_max_retries", 2)
         self.fr_retry_interval = self.config.get("fr_retry_interval", 2)
         self.fr_waiting_message = self.config.get("fr_waiting_message", "嗯…让我看看你这个小家伙发了什么有趣的东西。")
@@ -161,7 +165,10 @@ class SpectreCore(Star):
     # -------------------------------------------------------------------------
     async def _try_handle_forward_analysis(self, event: AstrMessageEvent):
         """
-        尝试处理合并转发消息。如果检测到意图，返回生成器；否则不产生任何输出。
+        尝试处理合并转发消息。
+        规则：
+        1. 直接发送 [Forward] -> 仅当 fr_enable_direct=True 时触发
+        2. 引用 [Forward] -> 仅当 fr_enable_reply=True 时触发
         """
         if not isinstance(event, AiocqhttpMessageEvent): return
 
@@ -170,32 +177,37 @@ class SpectreCore(Star):
         user_query: str = event.message_str.strip()
         is_implicit_query = not user_query and any(isinstance(seg, Comp.Reply) for seg in event.message_obj.message)
         
-        # 1. 扫描消息链
+        # 1. 扫描消息链 (直接发送)
         for seg in event.message_obj.message:
             if isinstance(seg, Comp.Forward):
-                # 直接发送的转发卡片
-                forward_id = seg.id
-                if not user_query: user_query = "请总结一下这个聊天记录"
-                break
+                # 【核心修正】这里增加了开关判断
+                if self.fr_enable_direct:
+                    forward_id = seg.id
+                    if not user_query: user_query = "请总结一下这个聊天记录"
+                    break
+                else:
+                    logger.debug("[SpectreCore] 检测到直接发送的转发卡片，但 direct_analysis 已关闭，跳过。")
             elif isinstance(seg, Comp.Reply):
                 reply_seg = seg
 
-        # 2. 扫描被引用的消息
+        # 2. 扫描被引用的消息 (回复触发)
         if not forward_id and reply_seg:
-            try:
-                client = event.bot
-                original_msg = await client.api.call_action('get_msg', message_id=reply_seg.id)
-                if original_msg and 'message' in original_msg:
-                    chain = original_msg['message']
-                    if isinstance(chain, list):
-                        for segment in chain:
-                            if isinstance(segment, dict) and segment.get("type") == "forward":
-                                forward_id = segment.get("data", {}).get("id")
-                                if not user_query or is_implicit_query: 
-                                    user_query = "请总结一下这个聊天记录"
-                                break
-            except Exception as e:
-                logger.debug(f"ForwardReader Check: 获取引用消息失败: {e}")
+            # 【核心修正】这里增加了开关判断
+            if self.fr_enable_reply:
+                try:
+                    client = event.bot
+                    original_msg = await client.api.call_action('get_msg', message_id=reply_seg.id)
+                    if original_msg and 'message' in original_msg:
+                        chain = original_msg['message']
+                        if isinstance(chain, list):
+                            for segment in chain:
+                                if isinstance(segment, dict) and segment.get("type") == "forward":
+                                    forward_id = segment.get("data", {}).get("id")
+                                    if not user_query or is_implicit_query: 
+                                        user_query = "请总结一下这个聊天记录"
+                                    break
+                except Exception as e:
+                    logger.debug(f"ForwardReader Check: 获取引用消息失败: {e}")
 
         # 3. 判定：如果不满足条件，直接返回，让 Spectre 继续处理
         if not forward_id or not user_query:
