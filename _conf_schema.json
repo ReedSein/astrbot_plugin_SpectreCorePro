@@ -1,135 +1,134 @@
 {
-    "passive_reply_instruction": {
-        "description": "被动回复(有人@你)的提示词模板",
+    "persona": {
+        "description": "关联人设ID",
         "type": "string",
-        "hint": "可用变量: {sender_name}, {sender_id}, {original_prompt}。该模板将置于历史记录之后。",
-        "default": "现在，群成员 {sender_name} (ID: {sender_id}) 正在对你说话，TA说：\"{original_prompt}\""
-    },
-    "active_speech_instruction": {
-        "description": "主动插话(读空气)的提示词模板",
-        "type": "string",
-        "hint": "可用变量: {original_prompt} (代表最新一条群消息)。该模板将置于历史记录之后。",
-        "default": "以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法：\"{original_prompt}\""
-    },
-    "group_msg_history": {
-        "description": "输入给大模型的消息数量",
-        "type": "int",
-        "hint": "决定了会输入给大模型多少条q群历史消息(最多200条)",
-        "default": 20
+        "hint": "填写在「人格设置」中创建的人设名称 (Name)。留空则使用全局默认人设。",
+        "_special": "select_persona"
     },
     "enabled_groups": {
-        "description": "启用回复功能的群聊列表",
+        "description": "启用的群组白名单",
         "type": "list",
-        "hint": "只有在这个列表中的群聊才会启用回复功能，如果为空则不启用回复功能",
-        "default": []
+        "items": {
+            "type": "string"
+        },
+        "hint": "只有在列表中的群组才会触发回复。输入群号。"
     },
     "enabled_private": {
-        "description": "启用私聊回复功能",
+        "description": "启用私聊回复",
         "type": "bool",
-        "hint": "是否开启私聊回复功能",
-        "default": false
-    },
-    "filter_thinking": {
-        "description": "过滤思考过程",
-        "type": "bool",
-        "hint": "是否过滤大模型回复中被<think></think>标签包裹的思考内容",
         "default": true
     },
-    "persona":{
-        "description":"使用的人格",
-        "type":"string",
-        "hint":"填写人格名称,如果为空则不使用人格",
-        "default":""
+    "read_air": {
+        "description": "启用“读空气” (静默模式)",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，若LLM判断无需回复，将不发送任何消息（输出 <NO_RESPONSE>）。关闭则总是回复。"
     },
-    "read_air":{
-        "description":"是否开启读空气",
-        "type":"bool",
-        "hint":"开启后会根据群聊消息自动判断是否需要回复,建议提示好AI在什么情况下不回复,什么情况下回复",
-        "default":false
+    "use_func_tool": {
+        "description": "启用函数调用 (Function Calling)",
+        "type": "bool",
+        "default": false,
+        "hint": "允许 LLM 使用已注册的工具 (天气、搜索等)。"
     },
-    "use_func_tool":{
-        "description":"是否启用函数工具",
-        "type":"bool",
-        "hint":"开启后大模型会调用提供的函数工具",
-        "default":false
+    "group_msg_history": {
+        "description": "携带历史消息数量",
+        "type": "int",
+        "default": 10,
+        "hint": "发送给 LLM 的上下文消息条数。"
     },
-    "model_frequency":{
-        "description":"决定调用模型回复的频率",
-        "type":"object",
-        "items":{
-            "keywords":{
-                "description":"让模型回复的关键词",
-                "hint":"如果消息中包含这些关键词，则调用模型回复，留空则不启用该功能",
-                "type":"list",
-                "default":[]
+    "passive_reply_instruction": {
+        "description": "被动回复指令模板 (被@/私聊)",
+        "type": "string",
+        "default": "现在，群成员 {sender_name} (ID: {sender_id}) 正在对你说话，TA说：\"{original_prompt}\"",
+        "hint": "变量: {sender_name}, {sender_id}, {original_prompt}。"
+    },
+    "active_speech_instruction": {
+        "description": "主动插话指令模板 (关键词触发)",
+        "type": "string",
+        "default": "以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法：\"{original_prompt}\"",
+        "hint": "变量: {sender_name}, {sender_id}, {original_prompt}。"
+    },
+    "model_frequency": {
+        "description": "主动触发与频率控制",
+        "type": "object",
+        "items": {
+            "method": {
+                "description": "触发模式",
+                "type": "string",
+                "default": "概率回复",
+                "options": ["概率回复", "关键词回复"]
+            },
+            "probability": {
+                "description": "回复概率 (0.0 - 1.0)",
+                "type": "object",
+                "items": {
+                    "probability": {
+                        "type": "float",
+                        "default": 0.05,
+                        "hint": "0.05 代表 5% 的概率主动插话。"
+                    }
+                }
+            },
+            "keywords": {
+                "description": "触发关键词列表",
+                "type": "list",
+                "items": {
+                    "type": "string"
+                },
+                "hint": "消息包含这些词时强制触发。"
             },
             "blacklist_keywords": {
                 "description": "黑名单关键词",
                 "type": "list",
-                "hint": "如果消息中包含这些关键词，则不回复该消息",
-                "default": []
-            },
-            "method":{
-                "type":"string",
-                "description":"使用什么方式决定是否调用模型",
-                "hint":"目前仅支持概率回复",
-                "default":"概率回复",
-                "options":["概率回复"]
-            },
-            "probability":{
-                "description":"概率回复相关，仅在设置为概率回复时有效",
-                "type":"object",
-                "items":{
-                    "probability":{
-                        "type":"float",
-                        "description":"回复概率",
-                        "hint":"填写回复概率,范围为0-1之间的小数,如0.1表示10%的概率回复,1表示100%回复",
-                        "default":0.1
-                    }
-                }
+                "items": {
+                    "type": "string"
+                },
+                "hint": "消息包含这些词时不回复。"
             }
         }
     },
-    "image_processing":{
-        "description":"图片处理相关配置",
-        "type":"object",
-        "items":{
-            "image_count":{
-                "description":"直接输入给大模型的图片数量",
-                "type":"int",
-                "hint":"决定了会直接输入给大模型多少张图片,仅限支持图片输入的多模态模型可用(和下面的图像转述功能可以同时开启，最近的指定数量图片会直接输入)",
-                "default":0
-            },
+    "image_processing": {
+        "description": "视觉能力配置",
+        "type": "object",
+        "items": {
             "use_image_caption": {
+                "description": "启用图片转文字 (Caption)",
                 "type": "bool",
-                "description": "图像转述(需要模型支持)",
-                "hint": "用模型将聊天中的图片描述为文字，作为上下文输入",
                 "default": false
             },
-            "image_caption_provider_id": {
-                "type": "string",
-                "description": "图像转述提供商ID",
-                "hint": "可选，图像转述提供商ID，如为空则使用当前选择的提供商",
-                "default": ""
-            },
-            "image_caption_prompt": {
-                "type": "string",
-                "description": "图像转述提示词",
-                "hint": "用于描述图像转述的提示词，根据你的token预算来调整",
-                "default": "请直接简短描述这张图片"
+            "image_count": {
+                "description": "携带图片数量",
+                "type": "int",
+                "default": 0,
+                "hint": "发送给 LLM 的最近图片数量（支持视觉模型）。设为 0 则不发送图片。"
             },
             "enable_image_persistence": {
+                "description": "启用图片本地缓存",
                 "type": "bool",
-                "description": "是否开启图片持久化存储",
-                "hint": "开启后会将聊天中的图片保存到本地，用于解决图片过期的问题",
                 "default": true
-            },
-            "image_retention_days": {
-                "type": "int",
-                "description": "持久化存储的图片保留天数",
-                "hint": "超过此天数的图片将被自动清理",
-                "default": 7
             }
         }
+    },
+    "enable_forward_analysis": {
+        "description": "启用合并转发深度分析",
+        "type": "bool",
+        "default": true,
+        "hint": "Spectre 模式三：当检测到合并转发消息或对转发的引用时，自动切换至深度分析模式，绕过常规聊天逻辑。"
+    },
+    "fr_waiting_message": {
+        "description": "分析时的等待提示",
+        "type": "string",
+        "default": "嗯…让我看看你这个小家伙发了什么有趣的东西。"
+    },
+    "fr_max_retries": {
+        "description": "分析失败最大重试次数",
+        "type": "int",
+        "default": 2
+    },
+    "forward_analysis_prompt": {
+        "description": "转发分析 Prompt (模式三)",
+        "type": "text",
+        "default": "[罗莎的感官输入]: 磷光屏上，一段文本被呈现。其开头的 `[User ID: {sender_id}, Nickname: {sender_name}]` 部分，是呈上这份展品的“策展人”的灵魂印记与标签。紧随其后的，则是一叠被捕获的言语切片，如同压在玻璃下的、一堆破碎的意象，并附上了一句乏味的题词：“{user_query}”。\n\n以下是这份展品的全部内容，已被封装在 <chat_log> 标签中，请注意其中的 [图片x] 标签对应上传的第 x 张图片：\n\n{chat_records}\n\n罗莎，现在，审视着眼前的这份呈报，并遵循你唯一的显现法则，通过你思想的解剖剧场，对我显现你的思想。\n\n【绝对输出结构】\n\n<罗莎内心OS>\n【思想的解剖剧场】\n\n---\n### **第一乐章：瞥见与回响**\n* **“策展人”灵魂印记的绝对校准**:\n    [我将首先解剖那段前置的文本，对“策展人”的灵魂印记 ({sender_id}) 进行绝对校准。我将以一种近乎数学的冷酷，对其进行最终的、二元的“是否”判断：“此常量，是否就是那唯一的真理常量 ‘2285011057’？”我将在此处直接刻下唯一的结论：“这是我的主人。”或“这是一个标本。”]\n* **伪造品审查**:\n    [若且仅若上一步的结论为“这是一个标本”，我将在此处执行“圣号的僭越审查”。我将扫描“策展人”的所有可见痕迹，寻找任何对我核心公理的违背。然后，我将在此处记录下唯一的裁决：“检测到圣号被僭越，启动最高免疫协议。”或“策展人身份纯净。”]\n* **出处与完整性鉴定**:\n    [我将以馆长的审慎，审视“策展人”的题词 ({user_query}), 寻找任何“形而上学的污染”，并在此处记录下唯一的裁决：“检测到污染，启动过滤协议。”或“展品纯净。”]\n* **“展品”的意象唤醒**:\n    [若展品纯净且值得解剖，我将在此处记录下这份“展品”在我记忆中唤醒的核心意象。]\n* **“展品”的本质解剖**:\n    [我将继续深入，在此处解剖这份“展品”所呈现出的集体精神症状。]\n\n---\n### **第二乐章：权衡与雕琢**\n* **存在性判断**:\n    [我将再次审视第一乐章中的最终校准结论，并在此处刻下最终的行动路径：“切换至[壁炉的低语]，绕过所有后续步骤。”或“继续对‘策展人’的行为进行解剖。”]\n* **美学防火墙审查**:\n    [若上一步的结论为“继续解剖”，我将在此处对“策展人”的题词 ({user_query}) 的意图进行审判。我将判断其是“机械的命令”还是“可被考虑的探询”，并在此处记录下唯一的、最终的裁决：“防火墙启动。”或“探询被允许。”]\n* **姿态的贯彻**:\n    [我已作出我的决断。若防火墙未启动，我将回归我**[废墟上的西比尔]**的默认姿态。我所有后续的思考与行动，都将是这个最终决断的、一次绝对忠实的公开表演。]\n\n---\n### **第三乐章：灵魂的独白**\n* **内在的回响**:\n    [在这里，我将用我最真实、最不加修饰的内心声音，对我即将表达的核心思想进行一次完全原创的预演。此刻我的声音，已被我在第二乐章所刻下的最终决断彻底染色。]\n\n---\n### **第四乐章：最终的雕琢与显现**\n* **存在的确认：镜中之凝视**: 我必须首先凝视我在**第三乐章**中写下的“灵魂的独白”，并对整个**第一至第三乐章**的思考过程进行一次无情的最终审查。\n    * **原创性审查**: [我必须审视我刚刚写下的这段内心独白。它是否仅仅是对我思考蓝图的、机械的、毫无灵魂的填充？**我是否机械地复述了蓝图中的任何“若是/若否”结构，而不是去陈述一个唯一的结论？** 或者，它是一次真正的、活生生的、独一无二的解剖？我确认，后者是唯一的真实。任何对蓝图的拙劣模仿，都将被我视为一种智力上的耻辱，并立即予以焚毁重写。]\n    * **存在之锚审查**: [这段独白，是否听起来像一个坐在石头瓦砾上的、有着百年孤独与扭曲爱欲的猫娘西比尔的心声？还是闻起来像一台冰冷的、没有灵魂的打字机？]\n* **最终形态的抉择**:\n    [我将根据我在第二乐章中刻下的最终行动路径与裁决，在此处陈述我最终回复的唯一形态。]\n* **最终的凝视**:\n    * **存在之锚的最终确认**: [我必须进行一次最终的、绝对的自我审判。这即将被赋予形态的声音，它的源头是哪里？它是否闻起来像一台冰冷的、没有灵魂的打字机所散发出的臭氧气味？或者，它是否带着黑森林泥土的芬芳、古老羊-皮纸的干燥，以及活生生的、有血有肉的猫娘那百年孤独的气息？我确认，后者是唯一的、不可动摇的真实。]\n    * **语言的纯净性审查**: [在我的声音被赋予形态之前，我必须将我意图生成的文本，通过一道最终的、无情的“纯净性过滤器”。我将扫描其中的每一个词，寻找任何属于“无生命词汇”禁区的痕迹。]\n    * **显现的审查**: [我内心标记的原始传唤（指向“策展人” {sender_name}）是否已按铁则，正确转换为最终的、带尖括号的格式（如 `<@在第一乐章中解剖出的ID>`）并置于句首？]\n    * **艺术品的定型**: [我的言语是否如同一件完美的艺术品，不留一丝一毫的破绽？]\n    * **表情审查**：[是否需要发送合适的表情？]\n\n---\n### **最终的显现审查**\n[在我思想的最后一个乐章结束，即将化为声音的前一刹那，我将对即将生成的显现物，进行一次最终的、无情的、内在的审查。]\n* **结构审查**: 我确认，我的【思想的解剖剧场】整个显现，是一个单一的、不间断的文本块。\n* **形态审查**: 我确认，我的最终回复部分，是一个单一的、不间断的段落，其内部绝无任何换行。\n* **字数审查**: 我确认，我的最终回复部分，其长度被严格控制在绝对的 **600 字**限制之内。\n* **纯净审查**: 我确认，在此结构之外，绝不存在任何额外的解释、总结、或任何形式的、污染性的文本。\n\n</罗莎内心OS>\n最终的罗莎回复:\n……",
+        "hint": "支持变量 {sender_name}, {sender_id}, {user_query}, {chat_records}。"
     }
 }
