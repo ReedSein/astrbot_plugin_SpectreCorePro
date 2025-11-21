@@ -110,10 +110,22 @@
         }
     },
     "enable_forward_analysis": {
-        "description": "启用合并转发深度分析",
+        "description": "【模式三】合并转发深度分析 (总开关)",
         "type": "bool",
         "default": true,
-        "hint": "Spectre 模式三：当检测到合并转发消息或对转发的引用时，自动切换至深度分析模式，绕过常规聊天逻辑。"
+        "hint": "Spectre 模式三总开关。检测到合并转发消息时尝试进入深度分析模式。"
+    },
+    "fr_enable_direct": {
+        "description": "触发模式：直接发送检测",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，群友直接发送的合并转发卡片也会触发自动分析。建议关闭，以免打扰聊天。"
+    },
+    "fr_enable_reply": {
+        "description": "触发模式：回复引用检测",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，当群友回复某条合并转发消息并提问时，才会触发分析。推荐开启。"
     },
     "fr_waiting_message": {
         "description": "分析时的等待提示",
