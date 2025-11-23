@@ -21,7 +21,7 @@ except ImportError:
     "spectrecorepro",
     "ReedSein",
     "SpectreCore Pro: 融合上下文增强、主动回复与深度转发分析的全能罗莎",
-    "2.6.0-Rosa-Ultimate-Stable",
+    "2.6.1-Rosa-Ultimate-LogFixed",
     "https://github.com/ReedSein/astrbot_plugin_SpectreCorePro"
 )
 class SpectreCore(Star):
@@ -291,11 +291,20 @@ class SpectreCore(Star):
             
             if self._is_explicit_trigger(event):
                 template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
+                log_tag = "被动回复"
             else:
                 template = self.config.get("active_speech_instruction", self.DEFAULT_ACTIVE_INSTRUCTION)
+                log_tag = "主动插话"
 
             instruction = self._format_instruction(template, event, current_msg)
-            req.prompt = f"{history_str}\n\n{instruction}" if history_str else instruction
+            final_prompt = f"{history_str}\n\n{instruction}" if history_str else instruction
+            
+            req.prompt = final_prompt
+            
+            # [Fix] 恢复日志打印
+            logger.info("="*30 + f" [SpectreCore Pro] Prompt 预览 ({log_tag}) " + "="*30)
+            logger.info(f"\n{final_prompt}")
+            logger.info("="*80)
             
             if hasattr(event, "_spectre_history"): delattr(event, "_spectre_history")
 
