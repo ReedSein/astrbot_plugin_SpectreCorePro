@@ -1,5 +1,6 @@
 import json
 import asyncio
+import re
 from typing import List, Dict, Any, Optional
 from astrbot.api.all import *
 from astrbot.api.event import filter
@@ -20,14 +21,24 @@ except ImportError:
     "spectrecorepro",
     "ReedSein",
     "SpectreCore Pro: 融合上下文增强、主动回复与深度转发分析的全能罗莎",
-    "2.5.0-Rosa-Hybrid-Persona-Protocol",
+    "2.6.0-Rosa-Ultimate-Stable",
     "https://github.com/ReedSein/astrbot_plugin_SpectreCorePro"
 )
 class SpectreCore(Star):
     
-    # 默认模板配置
-    DEFAULT_PASSIVE_INSTRUCTION = '现在，群成员 {sender_name} (ID: {sender_id}) 正在对你说话，TA说："{original_prompt}"'
-    DEFAULT_ACTIVE_INSTRUCTION = '以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法："{original_prompt}"'
+    # [优化] 默认模板配置：显式加入 XML 约束，防止主动回复时 LLM 只有人设却没指令，导致输出混乱
+    DEFAULT_PASSIVE_INSTRUCTION = (
+        '现在，群成员 {sender_name} (ID: {sender_id}) 正在对你说话，TA说："{original_prompt}"\n\n'
+        '【重要输出指令】\n'
+        '你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，'
+        '然后在 "最终的罗莎回复:" 后输出对用户的回复。'
+    )
+    DEFAULT_ACTIVE_INSTRUCTION = (
+        '以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法："{original_prompt}"\n\n'
+        '【重要输出指令】\n'
+        '你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，'
+        '然后在 "最终的罗莎回复:" 后输出对用户的回复。'
+    )
 
     # Forward Reader 默认 Prompt (核心思维协议版)
     DEFAULT_ANALYSIS_PROMPT = """[罗莎的感官输入]:
@@ -76,17 +87,14 @@ class SpectreCore(Star):
         HistoryStorage.init(config)
         ImageCaptionUtils.init(context, config)
         
-        # 加载 Forward Reader 配置
-        self.enable_forward_analysis = self.config.get("enable_forward_analysis", True) # 总开关
-        # 细分开关：控制触发条件
-        self.fr_enable_direct = self.config.get("fr_enable_direct", False) # 默认关闭直接转发分析
-        self.fr_enable_reply = self.config.get("fr_enable_reply", True)    # 默认开启引用分析
-        
-        self.fr_max_retries = self.config.get("fr_max_retries", 2)
-        self.fr_retry_interval = self.config.get("fr_retry_interval", 2)
+        self.enable_forward_analysis = self.config.get("enable_forward_analysis", True)
+        self.fr_enable_direct = self.config.get("fr_enable_direct", False)
+        self.fr_enable_reply = self.config.get("fr_enable_reply", True)
         self.fr_waiting_message = self.config.get("fr_waiting_message", "嗯…让我看看你这个小家伙发了什么有趣的东西。")
-        self.fr_fallback_reply = self.config.get("fr_fallback_reply", "（罗莎似乎陷入了沉思，无法组织起有效的语言……）")
         self.fr_max_text_length = 15000
+
+        # 正则预编译：用于兜底清除泄漏的 XML
+        self.SAFETY_NET_PATTERN = re.compile(r'<罗莎内心OS>.*?</罗莎内心OS>', re.DOTALL)
 
     @event_message_type(EventMessageType.GROUP_MESSAGE)
     async def on_group_message(self, event: AstrMessageEvent):
@@ -105,62 +113,53 @@ class SpectreCore(Star):
             logger.error(f"处理私聊消息错误: {e}")
             
     async def _process_message(self, event: AstrMessageEvent):
-        # =================================================================
-        # 1. 优先级最高：尝试处理合并转发分析 (The Third Type of Reply)
-        # =================================================================
+        # 1. Forward Analysis
         if self.enable_forward_analysis and IS_AIOCQHTTP:
-            # 如果处理成功，直接返回，不再执行后续的普通聊天逻辑
             handled = False
             async for result in self._try_handle_forward_analysis(event):
                 yield result
                 handled = True
-            if handled:
-                return 
+            if handled: return 
         
-        # =================================================================
-        # 2. 常规流程：保存历史记录
-        # =================================================================
+        # 2. History Save
         await HistoryStorage.process_and_save_user_message(event)
 
-        # 3. 放宽空消息检查 (允许纯图片/表情/引用触发)
+        # 3. Empty Check
         has_components = bool(getattr(event.message_obj, 'message', []))
         message_outline = event.get_message_outline() or ""
-        
-        if not message_outline.strip() and not has_components:
-            return
+        if not message_outline.strip() and not has_components: return
 
-        # 4. 决策回复 (被动回复 / 主动插话)
-        if ReplyDecision.should_reply(event, self.config):
-            async for result in ReplyDecision.process_and_reply(event, self.config, self.context):
-                yield result
+        # 4. Reply Decision
+        # [优化] 增加 try-catch 保护，防止 ReplyDecision 内部报错导致直接抛异常
+        # 将异常转化为 "Call Failed" 文本，这样 Retry 插件才能捕获并重试
+        try:
+            if ReplyDecision.should_reply(event, self.config):
+                async for result in ReplyDecision.process_and_reply(event, self.config, self.context):
+                    yield result
+        except Exception as e:
+            logger.error(f"[SpectreCore] Reply 流程异常: {e}")
+            # 返回一个伪造的失败结果，触发 Retry 插件
+            yield event.plain_result(f"调用失败: {e}")
 
     # -------------------------------------------------------------------------
-    # 模块：Forward Reader 核心逻辑 (集成版 - Hybrid Architecture)
+    # 模块：Forward Reader
     # -------------------------------------------------------------------------
     async def _try_handle_forward_analysis(self, event: AstrMessageEvent):
-        """
-        尝试处理合并转发消息。
-        """
         if not isinstance(event, AiocqhttpMessageEvent): return
-
         forward_id: Optional[str] = None
         reply_seg: Optional[Comp.Reply] = None
         user_query: str = event.message_str.strip()
         is_implicit_query = not user_query and any(isinstance(seg, Comp.Reply) for seg in event.message_obj.message)
         
-        # 1. 扫描消息链 (直接发送)
         for seg in event.message_obj.message:
             if isinstance(seg, Comp.Forward):
                 if self.fr_enable_direct:
                     forward_id = seg.id
                     if not user_query: user_query = "请总结一下这个聊天记录"
                     break
-                else:
-                    logger.debug("[SpectreCore] 检测到直接发送的转发卡片，但 direct_analysis 已关闭，跳过。")
             elif isinstance(seg, Comp.Reply):
                 reply_seg = seg
 
-        # 2. 扫描被引用的消息 (回复触发)
         if not forward_id and reply_seg:
             if self.fr_enable_reply:
                 try:
@@ -172,81 +171,57 @@ class SpectreCore(Star):
                             for segment in chain:
                                 if isinstance(segment, dict) and segment.get("type") == "forward":
                                     forward_id = segment.get("data", {}).get("id")
-                                    if not user_query or is_implicit_query: 
-                                        user_query = "请总结一下这个聊天记录"
+                                    if not user_query or is_implicit_query: user_query = "请总结一下这个聊天记录"
                                     break
-                except Exception as e:
-                    logger.debug(f"ForwardReader Check: 获取引用消息失败: {e}")
+                except Exception: pass
 
-        # 3. 判定：如果不满足条件，直接返回
-        if not forward_id or not user_query:
-            return
+        if not forward_id or not user_query: return
 
-        # 4. 满足条件，执行分析逻辑
         logger.info(f"[SpectreCore] 触发模式三：深度转发分析 (ForwardID: {forward_id})")
-        
-        # 发送等待提示
         yield event.chain_result([Comp.Reply(id=event.message_obj.message_id), Comp.Plain(self.fr_waiting_message)])
 
         try:
-            # 提取内容
             extracted_texts, image_urls = await self._extract_forward_content(event, forward_id)
             if not extracted_texts and not image_urls:
                 yield event.plain_result("无法提取到有效内容。")
                 return
 
-            # 构建 XML 数据
             chat_records_str = "\n".join(extracted_texts)
             if len(chat_records_str) > self.fr_max_text_length:
                 chat_records_str = chat_records_str[:self.fr_max_text_length] + "\n\n[...内容截断...]"
             chat_records_injection = f"<chat_log>\n{chat_records_str}\n</chat_log>"
 
-            # 准备变量
             sender_name = event.get_sender_name() or "未知访客"
             sender_id = event.get_sender_id() or "unknown"
 
-            # 获取 Prompt
             prompt_template = self.config.get("forward_analysis_prompt", self.DEFAULT_ANALYSIS_PROMPT)
             base_prompt = prompt_template.replace("{sender_name}", str(sender_name)) \
                                          .replace("{sender_id}", str(sender_id)) \
                                          .replace("{user_query}", str(user_query)) \
                                          .replace("{chat_records}", chat_records_injection)
 
-            # =============================================================
-            # [架构修正] 接入 AstrBot 标准事件流，兼容 Retry 插件
-            # =============================================================
-            
-            # 1. 设置标志位，通知 on_llm_request_custom (Priority 90) 避让，防止注入日常历史记录
             event._is_forward_analysis = True
             
-            # 2. [关键修改] 主动获取并注入配置的人设 (System Prompt)
-            # 这样“分析指令”走 User Prompt，“人设”走 System Prompt
             persona_system_prompt = ""
             persona_name = self.config.get("persona", "")
             if persona_name:
                 p = PersonaUtils.get_persona_by_name(self.context, persona_name)
-                if p:
-                    persona_system_prompt = p.get('prompt', '')
-                    logger.debug(f"[SpectreCore] Forward Analysis 注入人设: {persona_name}")
+                if p: persona_system_prompt = p.get('prompt', '')
 
-            # 3. 发送请求
             yield event.request_llm(
                 prompt=base_prompt,
                 image_urls=image_urls,
-                system_prompt=persona_system_prompt # 注入人设!
+                system_prompt=persona_system_prompt
             )
 
         except Exception as e:
             logger.error(f"Forward Analysis Error: {e}")
-            yield event.plain_result(f"分析过程发生错误: {e}")
+            yield event.plain_result(f"调用失败: {e}") # 异常统一为 Call Failed
 
     async def _extract_forward_content(self, event, forward_id: str) -> tuple[list[str], list[str]]:
-        """提取转发内容 (包含图片索引逻辑)"""
         client = event.bot
         forward_data = await client.api.call_action('get_forward_msg', id=forward_id)
-        
-        if not forward_data or "messages" not in forward_data:
-            raise ValueError("内容为空")
+        if not forward_data or "messages" not in forward_data: raise ValueError("内容为空")
 
         texts = []
         imgs = []
@@ -284,71 +259,45 @@ class SpectreCore(Star):
         return texts, imgs
 
     # -------------------------------------------------------------------------
-    # 原有逻辑保持不变 (兼容常规 Spectre 功能)
+    # 原有逻辑与辅助方法
     # -------------------------------------------------------------------------
 
     def _is_explicit_trigger(self, event: AstrMessageEvent) -> bool:
-        if event.message_obj.type == EventMessageType.PRIVATE_MESSAGE:
-            return True
-        
+        if event.message_obj.type == EventMessageType.PRIVATE_MESSAGE: return True
         bot_self_id = event.get_self_id()
         if not bot_self_id: return False
-        
         for comp in event.message_obj.message:
-            if isinstance(comp, At) and (str(comp.qq) == str(bot_self_id) or comp.qq == "all"):
-                return True
-            elif isinstance(comp, Reply):
-                return True
-        
+            if isinstance(comp, At) and (str(comp.qq) == str(bot_self_id) or comp.qq == "all"): return True
+            elif isinstance(comp, Reply): return True
         msg_text = event.get_message_outline() or ""
-        if f"@{bot_self_id}" in msg_text:
-            return True
-            
+        if f"@{bot_self_id}" in msg_text: return True
         return False
 
     def _format_instruction(self, template: str, event: AstrMessageEvent, original_prompt: str) -> str:
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
-        
-        instruction = template.replace("{sender_name}", str(sender_name))
-        instruction = instruction.replace("{sender_id}", str(sender_id))
-        instruction = instruction.replace("{original_prompt}", str(original_prompt))
+        instruction = template.replace("{sender_name}", str(sender_name)) \
+                              .replace("{sender_id}", str(sender_id)) \
+                              .replace("{original_prompt}", str(original_prompt))
         return instruction
 
     @filter.on_llm_request(priority=90)
     async def on_llm_request_custom(self, event: AstrMessageEvent, req: ProviderRequest):
         try:
-            # [修正] 旁路检测：如果是转发分析请求，直接放行，不注入日常聊天上下文
-            # 这样可以避免 format 覆盖掉 Forward Analysis 的 Prompt
-            if getattr(event, "_is_forward_analysis", False):
-                logger.debug("[SpectreCore] 检测到 Forward Analysis 请求，跳过日常上下文注入。")
-                return
+            if getattr(event, "_is_forward_analysis", False): return
 
             history_str = getattr(event, "_spectre_history", "")
             current_msg = req.prompt or "[图片/非文本消息]"
             
             if self._is_explicit_trigger(event):
                 template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
-                log_tag = "被动回复"
             else:
                 template = self.config.get("active_speech_instruction", self.DEFAULT_ACTIVE_INSTRUCTION)
-                log_tag = "主动插话"
 
             instruction = self._format_instruction(template, event, current_msg)
+            req.prompt = f"{history_str}\n\n{instruction}" if history_str else instruction
             
-            if history_str:
-                final_prompt = f"{history_str}\n\n{instruction}"
-            else:
-                final_prompt = instruction
-                
-            req.prompt = final_prompt
-            
-            logger.info("="*30 + f" [SpectreCore Pro] Prompt 预览 ({log_tag}) " + "="*30)
-            logger.info(f"\n{final_prompt}")
-            logger.info("="*80)
-
-            if hasattr(event, "_spectre_history"):
-                delattr(event, "_spectre_history")
+            if hasattr(event, "_spectre_history"): delattr(event, "_spectre_history")
 
         except Exception as e:
             logger.error(f"[SpectreCore Pro] Prompt 组装失败: {e}")
@@ -363,28 +312,72 @@ class SpectreCore(Star):
         except Exception as e:
             logger.error(f"保存Bot消息错误: {e}")
 
+    # =========================================================================
+    # [核心防护网 1] LLM Response 校验与诱导重试
+    # =========================================================================
     from astrbot.api.provider import LLMResponse
     @filter.on_llm_response(priority=114514)
     async def on_llm_resp(self, event: AstrMessageEvent, resp: LLMResponse):
         try:
-            # [修正] 转发分析结果校验与异常诱导
+            if resp.role != "assistant": return
+            
+            text = resp.completion_text or ""
+            
+            # [全局校验]：只要文本里出现了 <罗莎内心OS>，就必须完整，否则视为失败
+            if "<罗莎内心OS>" in text:
+                if "</罗莎内心OS>" not in text or "最终的罗莎回复:" not in text:
+                     logger.warning("[SpectreCore] 检测到不完整的 CoT 结构，诱导 Retry 插件重试。")
+                     resp.completion_text = "调用失败: 响应中断或 XML 结构不完整"
+                     return
+            
+            # [Forward Analysis 专用校验]：不仅要完整，还必须存在
             if getattr(event, "_is_forward_analysis", False):
-                text = resp.completion_text
-                # 校验核心 XML 标签
-                if not text or "<罗莎内心OS>" not in text:
-                    logger.warning("[SpectreCore] 转发分析结果校验失败(缺失XML)，诱导 Retry 插件重试。")
-                    # 修改为 Retry 插件能识别的错误关键词
-                    resp.completion_text = "调用失败: 响应缺失 <罗莎内心OS> 标签 (格式错误)"
-                    return
-                else:
-                    # 格式正确，放行。
-                    # Retry 插件 (Priority 5) 会在随后自动裁剪 CoT 并记录日志。
+                if "<罗莎内心OS>" not in text:
+                    logger.warning("[SpectreCore] 转发分析缺失 XML，诱导 Retry 插件重试。")
+                    resp.completion_text = "调用失败: 转发分析缺失 <罗莎内心OS> 标签"
                     return
 
-            if resp.role != "assistant": return
             resp.completion_text = TextFilter.process_model_text(resp.completion_text, self.config)
         except Exception as e:
             logger.error(f"处理大模型回复错误: {e}")
+
+    # =========================================================================
+    # [核心防护网 2] 最终防泄漏兜底 (优先级极低 -999)
+    # =========================================================================
+    @filter.on_decorating_result(priority=-999)
+    async def _force_strip_cot_safety_net(self, event: AstrMessageEvent):
+        """
+        最后的防线：如果 Retry 插件因为 Key 丢失或其他原因没能剪掉 CoT，
+        这里会强制剪除，防止标签泄漏给用户。
+        """
+        try:
+            result = event.get_result()
+            if not result or not result.chain: return
+            
+            dirty = False
+            for comp in result.chain:
+                if isinstance(comp, Comp.Text) and comp.text:
+                    if "<罗莎内心OS>" in comp.text:
+                        dirty = True
+                        # 暴力清理，虽然会丢失日志，但保住了体验
+                        logger.warning("[SpectreCore] 触发防泄漏兜底：Retry 插件未拦截，强制清理 CoT。")
+                        
+                        # 1. 尝试提取回复
+                        parts = re.split(r"最终的罗莎回复[:：]?\s*", comp.text)
+                        if len(parts) > 1:
+                            comp.text = parts[1].strip()
+                        else:
+                            # 2. 如果没找到回复标记，直接删掉标签内的内容
+                            comp.text = self.SAFETY_NET_PATTERN.sub("", comp.text).strip()
+            
+            if dirty:
+                # 再次清理可能残留的空行
+                for comp in result.chain:
+                    if isinstance(comp, Comp.Text):
+                        comp.text = comp.text.strip()
+                        
+        except Exception as e:
+            logger.error(f"[SpectreCore] 防泄漏兜底异常: {e}")
 
     @filter.on_decorating_result()
     async def on_decorating_result(self, event: AstrMessageEvent):
@@ -410,18 +403,12 @@ class SpectreCore(Star):
     async def reset(self, event: AstrMessageEvent, group_id: str = None):
         try:
             platform = event.get_platform_name()
-            if group_id:
-                is_priv, target_id = False, group_id
-            else:
-                is_priv = event.is_private_chat()
-                target_id = event.get_group_id() if not is_priv else event.get_sender_id()
+            if group_id: is_priv, target_id = False, group_id
+            else: is_priv, target_id = event.is_private_chat(), (event.get_group_id() if not event.is_private_chat() else event.get_sender_id())
             
-            if HistoryStorage.clear_history(platform, is_priv, target_id):
-                yield event.plain_result("历史记录已重置。")
-            else:
-                yield event.plain_result("重置失败。")
-        except Exception as e:
-            yield event.plain_result(f"错误: {e}")
+            if HistoryStorage.clear_history(platform, is_priv, target_id): yield event.plain_result("历史记录已重置。")
+            else: yield event.plain_result("重置失败。")
+        except Exception as e: yield event.plain_result(f"错误: {e}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("mute")
