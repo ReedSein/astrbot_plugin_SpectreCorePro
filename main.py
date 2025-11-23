@@ -21,7 +21,7 @@ except ImportError:
     "spectrecorepro",
     "ReedSein",
     "SpectreCore Pro: 融合上下文增强、主动回复与深度转发分析的全能罗莎",
-    "2.6.1-Rosa-Ultimate-LogFixed",
+    "2.6.2-Rosa-Ultimate-ApiFix",
     "https://github.com/ReedSein/astrbot_plugin_SpectreCorePro"
 )
 class SpectreCore(Star):
@@ -131,7 +131,6 @@ class SpectreCore(Star):
 
         # 4. Reply Decision
         # [优化] 增加 try-catch 保护，防止 ReplyDecision 内部报错导致直接抛异常
-        # 将异常转化为 "Call Failed" 文本，这样 Retry 插件才能捕获并重试
         try:
             if ReplyDecision.should_reply(event, self.config):
                 async for result in ReplyDecision.process_and_reply(event, self.config, self.context):
@@ -216,7 +215,7 @@ class SpectreCore(Star):
 
         except Exception as e:
             logger.error(f"Forward Analysis Error: {e}")
-            yield event.plain_result(f"调用失败: {e}") # 异常统一为 Call Failed
+            yield event.plain_result(f"调用失败: {e}")
 
     async def _extract_forward_content(self, event, forward_id: str) -> tuple[list[str], list[str]]:
         client = event.bot
@@ -365,10 +364,10 @@ class SpectreCore(Star):
             
             dirty = False
             for comp in result.chain:
-                if isinstance(comp, Comp.Text) and comp.text:
+                # [修正] 使用 Comp.Plain 代替错误的 Comp.Text
+                if isinstance(comp, Comp.Plain) and comp.text:
                     if "<罗莎内心OS>" in comp.text:
                         dirty = True
-                        # 暴力清理，虽然会丢失日志，但保住了体验
                         logger.warning("[SpectreCore] 触发防泄漏兜底：Retry 插件未拦截，强制清理 CoT。")
                         
                         # 1. 尝试提取回复
@@ -382,7 +381,7 @@ class SpectreCore(Star):
             if dirty:
                 # 再次清理可能残留的空行
                 for comp in result.chain:
-                    if isinstance(comp, Comp.Text):
+                    if isinstance(comp, Comp.Plain):
                         comp.text = comp.text.strip()
                         
         except Exception as e:
