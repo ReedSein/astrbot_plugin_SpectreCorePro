@@ -21,7 +21,7 @@ except ImportError:
     "spectrecorepro",
     "ReedSein",
     "SpectreCore Pro: 融合上下文增强、主动回复与深度转发分析的全能罗莎",
-    "2.7.0-Rosa-Ultimate-Gatekeeper",
+    "2.8.0-Rosa-Ultimate-Bypass",
     "https://github.com/ReedSein/astrbot_plugin_SpectreCorePro"
 )
 class SpectreCore(Star):
@@ -113,6 +113,18 @@ class SpectreCore(Star):
             logger.error(f"处理私聊消息错误: {e}")
             
     async def _process_message(self, event: AstrMessageEvent):
+        # =================================================================
+        # [重要修复] 指令旁路 (Command Bypass)
+        # 必须在任何逻辑之前检查。如果是指令，直接放行，不要拦截，也不要存历史。
+        # =================================================================
+        msg_text = (event.message_str or "").strip()
+        # 获取全局指令前缀 (例如 ["/", "。"])
+        global_prefixes = tuple(self.context.get_config().get("command_prefixes", ["/"]))
+        
+        if msg_text.startswith(global_prefixes):
+            # 这是一个指令，直接返回，交由 AstrBot 的指令系统处理
+            return 
+
         # 1. Forward Analysis (优先级最高，不受普通黑白名单限制，或根据需求限制)
         if self.enable_forward_analysis and IS_AIOCQHTTP:
             handled = False
@@ -127,7 +139,6 @@ class SpectreCore(Star):
         # 1. 检查白名单/开关 (Gatekeeper 1)
         if not ReplyDecision.is_chat_enabled(event, self.config):
             # 如果未开启，不仅要 return，还要 stop_event，防止默认 LLM 插件接管
-            # logger.debug(f"[SpectreCore] 拦截：会话未启用 (ChatID: {event.get_sender_id()})")
             event.stop_event()
             return
 
@@ -231,7 +242,7 @@ class SpectreCore(Star):
 
         except Exception as e:
             logger.error(f"Forward Analysis Error: {e}")
-            yield event.plain_result(f"调用失败: {e}") # 异常统一为 Call Failed
+            yield event.plain_result(f"调用失败: {e}")
 
     async def _extract_forward_content(self, event, forward_id: str) -> tuple[list[str], list[str]]:
         client = event.bot
@@ -316,6 +327,7 @@ class SpectreCore(Star):
             
             req.prompt = final_prompt
             
+            # [Fix] 恢复日志打印
             logger.info("="*30 + f" [SpectreCore Pro] Prompt 预览 ({log_tag}) " + "="*30)
             logger.info(f"\n{final_prompt}")
             logger.info("="*80)
@@ -379,7 +391,7 @@ class SpectreCore(Star):
             
             dirty = False
             for comp in result.chain:
-                # [修正] 使用 Comp.Plain
+                # [修正] 使用 Comp.Plain 代替错误的 Comp.Text
                 if isinstance(comp, Comp.Plain) and comp.text:
                     if "<罗莎内心OS>" in comp.text:
                         dirty = True
