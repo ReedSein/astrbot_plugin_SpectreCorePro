@@ -29,14 +29,12 @@ class ReplyDecision:
                 return False
 
             # 4. 检查启用状态 (类型安全转换)
-            # [Mod] 使用公开方法
-            if not ReplyDecision.is_chat_enabled(event, config):
+            if not ReplyDecision._is_chat_enabled(event, config):
                 return False
 
             # 5. 检查黑名单
             blacklist = config.get("model_frequency", {}).get("blacklist_keywords", [])
-            # [Mod] 使用公开方法
-            if blacklist and ReplyDecision.check_keywords(event, blacklist):
+            if blacklist and ReplyDecision._check_keywords(event, blacklist):
                 logger.debug("[SpectreCore] 过滤：包含黑名单关键词")
                 return False
 
@@ -50,8 +48,7 @@ class ReplyDecision:
             # 7. 关键词检测
             freq_config = config.get("model_frequency", {})
             keywords = freq_config.get("keywords", [])
-            # [Mod] 使用公开方法
-            if keywords and ReplyDecision.check_keywords(event, keywords):
+            if keywords and ReplyDecision._check_keywords(event, keywords):
                 logger.info(f"[SpectreCore] 触发：包含触发关键词")
                 return True
             
@@ -73,11 +70,8 @@ class ReplyDecision:
             return False
 
     @staticmethod
-    def is_chat_enabled(event: AstrMessageEvent, config: AstrBotConfig) -> bool:
-        """
-        检查当前会话是否开启 (类型安全版)
-        [Public API] 用于 main.py 进行事件拦截
-        """
+    def _is_chat_enabled(event: AstrMessageEvent, config: AstrBotConfig) -> bool:
+        """检查当前会话是否开启 (类型安全版)"""
         if event.is_private_chat():
             return config.get("enabled_private", False)
         
@@ -113,11 +107,7 @@ class ReplyDecision:
             return False
 
     @staticmethod
-    def check_keywords(event: AstrMessageEvent, keywords: list) -> bool:
-        """
-        检查消息是否包含关键词
-        [Public API]
-        """
+    def _check_keywords(event: AstrMessageEvent, keywords: list) -> bool:
         msg_text = event.get_message_outline() or ""
         for kw in keywords:
             if kw in msg_text:
