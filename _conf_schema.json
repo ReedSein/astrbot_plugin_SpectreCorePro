@@ -34,7 +34,13 @@
         "description": "携带历史消息数量",
         "type": "int",
         "default": 10,
-        "hint": "发送给 LLM 的上下文消息条数。"
+        "hint": "发送给 LLM 的上下文消息条数（时间线最近的消息）。"
+    },
+    "bot_reply_history_count": {
+        "description": "【上下文增强】强制包含 Bot 最近发言条数",
+        "type": "int",
+        "default": 3,
+        "hint": "即使被刷屏，也强制从更早的历史中捞取 Bot 最近的 N 条发言插入上下文。防止 Bot 忘记自己刚才说过什么。"
     },
     "passive_reply_instruction": {
         "description": "被动回复指令模板 (被@/私聊)",
@@ -139,3 +145,4 @@
         "hint": "支持变量 {sender_name}, {sender_id}, {user_query}, {chat_records}。注意：Prompt 中必须保留 <罗莎内心OS> XML 结构，否则将触发自动重试直到失败。"
     }
 }
+
