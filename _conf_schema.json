@@ -24,6 +24,12 @@
         "default": false,
         "hint": "开启后，若LLM判断无需回复，将不发送任何消息（输出 <NO_RESPONSE>）。关闭则总是回复。"
     },
+    "enable_time_tracking": {
+        "description": "启用时间感知 (Time Awareness)",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后，Bot 将能感知时间流逝（如“距离上次对话过去了多久”），并根据间隔调整回复语气（寒暄/连贯）。"
+    },
     "use_func_tool": {
         "description": "启用函数调用 (Function Calling)",
         "type": "bool",
@@ -145,4 +151,3 @@
         "hint": "支持变量 {sender_name}, {sender_id}, {user_query}, {chat_records}。注意：Prompt 中必须保留 <罗莎内心OS> XML 结构，否则将触发自动重试直到失败。"
     }
 }
-
