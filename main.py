@@ -21,7 +21,7 @@ except ImportError:
     "spectrecorepro",
     "ReedSein",
     "SpectreCore Pro: 融合上下文增强、主动回复与深度转发分析的全能罗莎",
-    "2.6.3-Rosa-Context-Aware",
+    "2.6.4-Rosa-Context-Aware-Fix",
     "https://github.com/ReedSein/astrbot_plugin_SpectreCorePro"
 )
 class SpectreCore(Star):
@@ -437,9 +437,9 @@ class SpectreCore(Star):
     async def callllm(self, event: AstrMessageEvent):
         yield await LLMUtils.call_llm(event, self.config, self.context)
 
-    # [新增] 插件终止清理逻辑
+    # [核心修复] 插件终止清理逻辑
     async def terminate(self):
         """插件终止时清理资源，防止内存泄漏"""
-        LLMUtils._last_message_time.clear()
+        # [Fix] _last_message_time 已在持久化更新中移除，此处不再清理以防报错
         LLMUtils._llm_call_status.clear()
         logger.info("[SpectreCore] 资源已释放。")
