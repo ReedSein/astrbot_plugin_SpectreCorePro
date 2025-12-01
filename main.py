@@ -395,7 +395,12 @@ class SpectreCore(Star):
                 msg = "".join([comp.text for comp in result.chain if hasattr(comp, 'text')])
                 if "<NO_RESPONSE>" in msg:
                     event.clear_result()
-                    logger.debug("触发 NO_RESPONSE，阻止发送")
+                    
+                    # [优化] 添加详细日志
+                    source_type = "私聊" if event.is_private_chat() else f"群[{event.get_group_id()}]"
+                    sender = event.get_sender_name()
+                    logger.info(f"[SpectreCore] 🛑 触发静默模式(读空气) | 来源: {source_type} | 用户: {sender}")
+                    
         except Exception as e:
             logger.error(f"Decorating result error: {e}")
 
