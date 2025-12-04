@@ -4,10 +4,11 @@ import time
 import datetime
 import threading
 import aiohttp
+import json
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
-    from backports.zoneinfo import ZoneInfo  # 兼容 Python 3.8
+    from backports.zoneinfo import ZoneInfo
 
 from .history_storage import HistoryStorage
 from .message_utils import MessageUtils
@@ -16,8 +17,8 @@ from .persona_utils import PersonaUtils
 
 class LLMUtils:
     """
-    大模型调用工具类 (SpectreCore Pro - Dual Timezone Edition)
-    支持双时区并行感知（如 Master 所在时区 vs Bot 所在时区）。
+    大模型调用工具类 (SpectreCore Pro - Dual Timezone + Multi-Source Sync)
+    支持双时区并行感知，并内置多源网络时间校准机制（抗干扰版）。
     """
     
     _llm_call_status: Dict[str, Dict[str, Any]] = {}
@@ -53,35 +54,76 @@ class LLMUtils:
     @staticmethod
     async def _sync_network_time(timezone_str: str):
         """
-        [异步] 自主联网校准时间
+        [异步] 多源自主联网校准时间
+        依次尝试多个高可用时间接口，计算系统时间偏差。
         """
         if LLMUtils._is_time_synced: return
 
         async with LLMUtils._sync_lock:
             if LLMUtils._is_time_synced: return
             
-            # 无论目标时区是什么，我们只需要计算相对于 UTC 的绝对时间戳偏移量
-            # 使用 Etc/UTC 获取纯净时间
-            logger.info(f"[SpectreCore] 正在联网校准时间 (基准: UTC)...")
-            try:
-                url = f"http://worldtimeapi.org/api/timezone/Etc/UTC"
-                async with aiohttp.ClientSession() as session:
-                    async with session.get(url, timeout=5) as resp:
-                        if resp.status == 200:
-                            data = await resp.json()
-                            datetime_str = data.get('datetime')
-                            remote_time = datetime.datetime.fromisoformat(datetime_str)
-                            system_now_utc = datetime.datetime.now(datetime.timezone.utc)
-                            
-                            LLMUtils._time_offset = remote_time.timestamp() - system_now_utc.timestamp()
-                            LLMUtils._is_time_synced = True
-                            
-                            logger.info(f"[SpectreCore] 时间校准成功！系统时间偏差: {LLMUtils._time_offset:.2f}秒")
-                        else:
-                            logger.warning(f"[SpectreCore] 时间校准失败，HTTP {resp.status}")
-            except Exception as e:
-                logger.warning(f"[SpectreCore] 联网获取时间超时或失败: {e}，将使用系统本地时间。")
-                pass
+            logger.info(f"[SpectreCore] 正在执行多源时间校准...")
+            
+            # 定义时间源列表 (URL, 类型)
+            # 类型用于区分不同的解析逻辑
+            sources = [
+                # 1. 淘宝 API (国内极速，返回毫秒级时间戳)
+                ("http://api.m.taobao.com/rest/api3.do?api=mtop.common.getTimestamp", "taobao"),
+                # 2. WorldTimeAPI (国际标准)
+                ("http://worldtimeapi.org/api/timezone/Etc/UTC", "worldtimeapi"),
+                # 3. 苏宁 API (备用)
+                ("http://quan.suning.com/getSysTime.do", "suning")
+            ]
+            
+            async with aiohttp.ClientSession() as session:
+                for url, src_type in sources:
+                    try:
+                        logger.debug(f"[SpectreCore] 尝试连接时间源 ({src_type})...")
+                        # 设置较短的超时，快速故障转移
+                        async with session.get(url, timeout=3) as resp:
+                            if resp.status == 200:
+                                remote_ts = 0.0
+                                
+                                if src_type == "worldtimeapi":
+                                    data = await resp.json()
+                                    datetime_str = data.get('datetime')
+                                    remote_time = datetime.datetime.fromisoformat(datetime_str)
+                                    remote_ts = remote_time.timestamp()
+                                    
+                                elif src_type == "taobao":
+                                    data = await resp.json()
+                                    # 格式: {"data": {"t": "169..."}}
+                                    ts_ms = data.get('data', {}).get('t')
+                                    if ts_ms:
+                                        remote_ts = int(ts_ms) / 1000.0
+                                        
+                                elif src_type == "suning":
+                                    data = await resp.json()
+                                    # 格式: {"sysTime2":"2023-10-27 10:00:00"}
+                                    time_str = data.get('sysTime2')
+                                    if time_str:
+                                        # 苏宁返回的是北京时间字符串
+                                        dt = datetime.datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+                                        # 减去8小时转为 UTC 时间戳，或者直接设为北京时区再转 timestamp
+                                        tz_cn = datetime.timezone(datetime.timedelta(hours=8))
+                                        dt = dt.replace(tzinfo=tz_cn)
+                                        remote_ts = dt.timestamp()
+
+                                if remote_ts > 0:
+                                    # 核心逻辑：计算偏移量
+                                    # 偏移量 = 真实网络时间戳 - 本地系统时间戳
+                                    # 后续获取时间时：PreceiseTime = LocalTime + Offset
+                                    system_now_ts = time.time()
+                                    LLMUtils._time_offset = remote_ts - system_now_ts
+                                    LLMUtils._is_time_synced = True
+                                    
+                                    logger.info(f"[SpectreCore] 时间校准成功 (来源: {src_type})！系统时间偏差: {LLMUtils._time_offset:.2f}秒")
+                                    return # 成功后直接退出
+                    except Exception as e:
+                        logger.warning(f"[SpectreCore] 时间源 {src_type} 连接失败: {e}")
+                        continue
+            
+            logger.error("[SpectreCore] ❌ 所有网络时间源均不可用，将强制回退至系统本地时间。请检查服务器网络连接。")
 
     @staticmethod
     async def _get_precise_now(config: AstrBotConfig, tz_name: str) -> datetime.datetime:
@@ -92,11 +134,11 @@ class LLMUtils:
         try:
             target_tz = ZoneInfo(tz_name)
         except:
-            # 默认兜底
             target_tz = ZoneInfo("Asia/Shanghai")
             
         # 2. 联网校准触发 (只需一次)
         if config.get("enable_internet_time", False) and not LLMUtils._is_time_synced:
+            # 异步触发校准，不阻塞当前请求太久，但为了第一次准确，这里 await
             await LLMUtils._sync_network_time("Etc/UTC")
             
         # 3. 计算时间
@@ -115,9 +157,10 @@ class LLMUtils:
 
     @staticmethod
     def _get_tz_display_name(tz_str: str) -> str:
-        """简单的时区中文名映射，优化显示体验"""
         mapping = {
             "Asia/Shanghai": "北京时间",
+            "Asia/Hong_Kong": "香港时间",
+            "Asia/Taipei": "台北时间",
             "Asia/Tokyo": "东京时间",
             "America/Los_Angeles": "美国太平洋时区",
             "America/New_York": "美国东部时间",
@@ -129,7 +172,7 @@ class LLMUtils:
     @staticmethod
     async def _get_time_prompt(history_msgs: List[AstrBotMessage], current_user_id: str, config: AstrBotConfig) -> str:
         """
-        [双时区注入版] 生成包含双重时间的时间感知提示词
+        [双时区 + 多源校准版] 生成时间感知提示词
         """
         try:
             if not config.get('enable_time_tracking', True):
@@ -145,10 +188,6 @@ class LLMUtils:
             
             if tz_secondary and tz_secondary.strip():
                 dt_secondary = await LLMUtils._get_precise_now(config, tz_secondary)
-                # 格式：
-                # 当前时间:
-                # 2023-xx-xx (美国太平洋时区)
-                # 2023-xx-xx (北京时间)
                 time_display_str = (
                     f"当前时间:\n"
                     f"{dt_secondary.strftime('%Y-%m-%d %H:%M:%S')} ({LLMUtils._get_tz_display_name(tz_secondary)})\n"
@@ -157,11 +196,11 @@ class LLMUtils:
             else:
                 time_display_str = f"当前时间 ({LLMUtils._get_tz_display_name(tz_primary)}): {dt_primary.strftime('%Y-%m-%d %H:%M:%S')}"
 
-            # 3. 计算活跃度 (使用 UTC 时间戳计算差值，不受时区影响)
+            # 3. 计算活跃度 (使用 UTC 时间戳计算差值)
             if not history_msgs:
                 return f"{time_display_str}。"
 
-            current_ts = dt_primary.timestamp() # 任何时区的 timestamp 都是一样的
+            current_ts = dt_primary.timestamp() 
             
             last_global_msg = None
             last_user_msg = None
