@@ -28,7 +28,25 @@
         "description": "启用时间感知 (Time Awareness)",
         "type": "bool",
         "default": true,
-        "hint": "开启后，Bot 将能感知时间流逝（如“距离上次对话过去了多久”），并根据间隔调整回复语气（寒暄/连贯）。"
+        "hint": "开启后，Bot 将能感知时间流逝，并根据间隔调整回复语气。"
+    },
+    "system_timezone": {
+        "description": "【时间感知】主时区 (Bot所在地)",
+        "type": "string",
+        "default": "Asia/Shanghai",
+        "hint": "Bot 的主要生物钟时区。例如：Asia/Shanghai (北京时间)。"
+    },
+    "secondary_timezone": {
+        "description": "【时间感知】副时区 (Master所在地)",
+        "type": "string",
+        "default": "America/Los_Angeles",
+        "hint": "可选。注入第二个时区时间供 Bot 参考。例如：America/Los_Angeles (太平洋时间)。留空则不显示。"
+    },
+    "enable_internet_time": {
+        "description": "【时间感知】启用联网时间校准",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后，Bot 将联网获取真实时间并计算系统时间偏差。解决服务器时间不准的问题。"
     },
     "use_func_tool": {
         "description": "启用函数调用 (Function Calling)",
@@ -46,7 +64,7 @@
         "description": "【上下文增强】强制包含 Bot 最近发言条数",
         "type": "int",
         "default": 3,
-        "hint": "即使被刷屏，也强制从更早的历史中捞取 Bot 最近的 N 条发言插入上下文。防止 Bot 忘记自己刚才说过什么。"
+        "hint": "即使被刷屏，也强制从更早的历史中捞取 Bot 最近的 N 条发言插入上下文。"
     },
     "passive_reply_instruction": {
         "description": "被动回复指令模板 (被@/私聊)",
