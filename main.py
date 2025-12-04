@@ -21,7 +21,7 @@ except ImportError:
     "spectrecorepro",
     "ReedSein",
     "SpectreCore Pro: 融合上下文增强、主动回复与深度转发分析的全能罗莎",
-    "2.6.4-Rosa-Context-Aware-Fix",
+    "2.6.5-Rosa-Admin-Tools",
     "https://github.com/ReedSein/astrbot_plugin_SpectreCorePro"
 )
 class SpectreCore(Star):
@@ -395,12 +395,7 @@ class SpectreCore(Star):
                 msg = "".join([comp.text for comp in result.chain if hasattr(comp, 'text')])
                 if "<NO_RESPONSE>" in msg:
                     event.clear_result()
-                    
-                    # [优化] 添加详细日志
-                    source_type = "私聊" if event.is_private_chat() else f"群[{event.get_group_id()}]"
-                    sender = event.get_sender_name()
-                    logger.info(f"[SpectreCore] 🛑 触发静默模式(读空气) | 来源: {source_type} | 用户: {sender}")
-                    
+                    logger.debug("触发 NO_RESPONSE，阻止发送")
         except Exception as e:
             logger.error(f"Decorating result error: {e}")
 
@@ -409,7 +404,7 @@ class SpectreCore(Star):
 
     @spectrecore.command("help")
     async def help(self, event: AstrMessageEvent):
-        yield event.plain_result("SpectreCore Pro: \n/sc reset - 重置历史\n/sc mute [分] - 闭嘴")
+        yield event.plain_result("SpectreCore Pro: \n/sc reset - 重置当前/指定历史\n/sc groupreset [群号] - 重置指定群\n/sc mute [分] - 闭嘴")
         
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("reset")
@@ -422,6 +417,30 @@ class SpectreCore(Star):
             if HistoryStorage.clear_history(platform, is_priv, target_id): yield event.plain_result("历史记录已重置。")
             else: yield event.plain_result("重置失败。")
         except Exception as e: yield event.plain_result(f"错误: {e}")
+
+    # [新增指令] 远程重置指定群组的历史记录
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @spectrecore.command("groupreset")
+    async def groupreset(self, event: AstrMessageEvent, group_id: str):
+        """
+        重置指定群组的历史记录
+        指令: /sc groupreset <群号>
+        """
+        try:
+            if not group_id:
+                yield event.plain_result("请提供群号。用法: /sc groupreset <群号>")
+                return
+
+            platform = event.get_platform_name()
+            # 强制指定为群聊模式 (is_private=False)
+            target_id = str(group_id)
+            
+            if HistoryStorage.clear_history(platform, False, target_id):
+                yield event.plain_result(f"已重置群聊 {target_id} 的历史记录。")
+            else:
+                yield event.plain_result(f"重置失败：未找到群聊 {target_id} 的历史记录文件，或无需重置。")
+        except Exception as e:
+            yield event.plain_result(f"操作发生错误: {e}")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("mute")
@@ -445,6 +464,5 @@ class SpectreCore(Star):
     # [核心修复] 插件终止清理逻辑
     async def terminate(self):
         """插件终止时清理资源，防止内存泄漏"""
-        # [Fix] _last_message_time 已在持久化更新中移除，此处不再清理以防报错
         LLMUtils._llm_call_status.clear()
         logger.info("[SpectreCore] 资源已释放。")
