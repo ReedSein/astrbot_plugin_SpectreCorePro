@@ -315,7 +315,16 @@ class SpectreCore(Star):
                 # [新增] 检查是否为空@ (Empty Mention)
                 if self._is_empty_mention_only(event):
                     empty_prompt = self.config.get("empty_mention_prompt", "（用户只是拍了拍你，没有说话，请根据当前场景自然互动）")
-                    current_msg = empty_prompt
+                    try:
+                        # 变量注入 (Variable Injection)
+                        s_name = event.get_sender_name() or "用户"
+                        s_id = event.get_sender_id() or "unknown"
+                        # 使用 safe replace 策略，避免 format() 抛出 KeyError
+                        current_msg = empty_prompt.replace("{sender_name}", str(s_name))\
+                                                  .replace("{sender_id}", str(s_id))
+                    except Exception as e:
+                        logger.warning(f"[SpectreCore] 空@提示词格式化失败: {e}")
+                        current_msg = empty_prompt
                     
                 template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
                 log_tag = "被动回复"
