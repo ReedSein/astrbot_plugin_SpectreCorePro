@@ -311,28 +311,41 @@ class SpectreCore(Star):
             history_str = getattr(event, "_spectre_history", "")
             current_msg = req.prompt or "[图片/非文本消息]"
             
+            instruction = ""
+            log_tag = ""
+
             if self._is_explicit_trigger(event):
-                # [新增] 检查是否为空@ (Empty Mention)
+                # =======================================
+                # Branch B: 空@唤醒 (Empty Mention)
+                # =======================================
                 if self._is_empty_mention_only(event):
-                    empty_prompt = self.config.get("empty_mention_prompt", "（用户只是拍了拍你，没有说话，请根据当前场景自然互动）")
+                    raw_prompt = self.config.get("empty_mention_prompt", "（用户只是拍了拍你，没有说话，请根据当前场景自然互动）")
                     try:
-                        # 变量注入 (Variable Injection)
                         s_name = event.get_sender_name() or "用户"
                         s_id = event.get_sender_id() or "unknown"
-                        # 使用 safe replace 策略，避免 format() 抛出 KeyError
-                        current_msg = empty_prompt.replace("{sender_name}", str(s_name))\
-                                                  .replace("{sender_id}", str(s_id))
+                        # 直接作为 instruction 使用，不套用被动回复模板
+                        instruction = raw_prompt.replace("{sender_name}", str(s_name))\
+                                                .replace("{sender_id}", str(s_id))
                     except Exception as e:
                         logger.warning(f"[SpectreCore] 空@提示词格式化失败: {e}")
-                        current_msg = empty_prompt
-                    
-                template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
-                log_tag = "被动回复"
+                        instruction = raw_prompt
+                    log_tag = "空@唤醒"
+                
+                # =======================================
+                # Branch A: 标准被动回复 (Passive Reply)
+                # =======================================
+                else:
+                    template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
+                    instruction = self._format_instruction(template, event, current_msg)
+                    log_tag = "被动回复"
             else:
+                # =======================================
+                # Branch C: 主动插话 (Active Reply)
+                # =======================================
                 template = self.config.get("active_speech_instruction", self.DEFAULT_ACTIVE_INSTRUCTION)
+                instruction = self._format_instruction(template, event, current_msg)
                 log_tag = "主动插话"
 
-            instruction = self._format_instruction(template, event, current_msg)
             final_prompt = f"{history_str}\n\n{instruction}" if history_str else instruction
             
             req.prompt = final_prompt
