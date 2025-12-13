@@ -261,6 +261,29 @@ class SpectreCore(Star):
     # 原有逻辑与辅助方法
     # -------------------------------------------------------------------------
 
+    def _is_empty_mention_only(self, event: AstrMessageEvent) -> bool:
+        """判断是否仅被@但无实质内容"""
+        if event.is_private_chat(): return False 
+        
+        bot_self_id = event.get_self_id()
+        if not bot_self_id: return False
+        
+        has_at_me = False
+        has_content = False
+        
+        if hasattr(event.message_obj, 'message'):
+            for comp in event.message_obj.message:
+                if isinstance(comp, At):
+                    if str(comp.qq) == str(bot_self_id) or comp.qq == "all":
+                        has_at_me = True
+                elif isinstance(comp, Comp.Plain):
+                    if comp.text and comp.text.strip():
+                        has_content = True
+                elif isinstance(comp, Comp.Image) or isinstance(comp, Comp.Face) or isinstance(comp, Reply):
+                    has_content = True
+                    
+        return has_at_me and not has_content
+
     def _is_explicit_trigger(self, event: AstrMessageEvent) -> bool:
         if event.message_obj.type == EventMessageType.PRIVATE_MESSAGE: return True
         bot_self_id = event.get_self_id()
@@ -289,6 +312,11 @@ class SpectreCore(Star):
             current_msg = req.prompt or "[图片/非文本消息]"
             
             if self._is_explicit_trigger(event):
+                # [新增] 检查是否为空@ (Empty Mention)
+                if self._is_empty_mention_only(event):
+                    empty_prompt = self.config.get("empty_mention_prompt", "（用户只是拍了拍你，没有说话，请根据当前场景自然互动）")
+                    current_msg = empty_prompt
+                    
                 template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
                 log_tag = "被动回复"
             else:
