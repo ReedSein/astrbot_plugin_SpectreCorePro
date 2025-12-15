@@ -329,8 +329,11 @@ class SpectreCore(Star):
                         s_name = event.get_sender_name() or "用户"
                         s_id = event.get_sender_id() or "unknown"
                         # 直接作为 instruction 使用，不套用被动回复模板
+                        # [Variable Injection] 增加 {memory} 支持
+                        memory_context = getattr(event, "_dynamic_memory_context", "")
                         instruction = raw_prompt.replace("{sender_name}", str(s_name))\
-                                                .replace("{sender_id}", str(s_id))
+                                                .replace("{sender_id}", str(s_id))\
+                                                .replace("{memory}", str(memory_context))
                     except Exception as e:
                         logger.warning(f"[SpectreCore] 空@提示词格式化失败: {e}")
                         instruction = raw_prompt
