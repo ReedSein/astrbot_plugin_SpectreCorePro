@@ -298,9 +298,14 @@ class SpectreCore(Star):
     def _format_instruction(self, template: str, event: AstrMessageEvent, original_prompt: str) -> str:
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
+        
+        # [Variable Injection] 从 event 中读取上游插件挂载的记忆
+        memory_context = getattr(event, "_dynamic_memory_context", "")
+        
         instruction = template.replace("{sender_name}", str(sender_name)) \
                               .replace("{sender_id}", str(sender_id)) \
-                              .replace("{original_prompt}", str(original_prompt))
+                              .replace("{original_prompt}", str(original_prompt)) \
+                              .replace("{memory}", str(memory_context))
         return instruction
 
     @filter.on_llm_request(priority=90)
