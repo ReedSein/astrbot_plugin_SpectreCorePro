@@ -298,14 +298,9 @@ class SpectreCore(Star):
     def _format_instruction(self, template: str, event: AstrMessageEvent, original_prompt: str) -> str:
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
-        
-        # [Variable Injection] 从 event 中读取上游插件挂载的记忆
-        memory_context = getattr(event, "_dynamic_memory_context", "")
-        
         instruction = template.replace("{sender_name}", str(sender_name)) \
                               .replace("{sender_id}", str(sender_id)) \
-                              .replace("{original_prompt}", str(original_prompt)) \
-                              .replace("{memory}", str(memory_context))
+                              .replace("{original_prompt}", str(original_prompt))
         return instruction
 
     @filter.on_llm_request(priority=90)
@@ -329,11 +324,8 @@ class SpectreCore(Star):
                         s_name = event.get_sender_name() or "用户"
                         s_id = event.get_sender_id() or "unknown"
                         # 直接作为 instruction 使用，不套用被动回复模板
-                        # [Variable Injection] 增加 {memory} 支持
-                        memory_context = getattr(event, "_dynamic_memory_context", "")
                         instruction = raw_prompt.replace("{sender_name}", str(s_name))\
-                                                .replace("{sender_id}", str(s_id))\
-                                                .replace("{memory}", str(memory_context))
+                                                .replace("{sender_id}", str(s_id))
                     except Exception as e:
                         logger.warning(f"[SpectreCore] 空@提示词格式化失败: {e}")
                         instruction = raw_prompt
