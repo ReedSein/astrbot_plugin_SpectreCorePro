@@ -68,21 +68,21 @@
     },
     "passive_reply_instruction": {
         "description": "被动回复指令模板 (被@/私聊)",
-        "type": "string",
-        "default": "现在，群成员 {sender_name} (ID: {sender_id}) 正在对你说话，TA说：\"{original_prompt}\"\n\n【重要输出指令】\n你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，然后在 \"最终的罗莎回复:\" 后输出对用户的回复。",
-        "hint": "变量: {sender_name}, {sender_id}, {original_prompt}。"
+        "type": "text",
+        "default": "现在，群成员 {sender_name} (ID: {sender_id}) 正在对你说话，TA说：\"{original_prompt}\"\n\n{memory_block}\n\n【重要输出指令】\n你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，然后在 \"最终的罗莎回复:\" 后输出对用户的回复。",
+        "hint": "支持变量: {memory_block} (长期记忆), {sender_name}, {sender_id}, {original_prompt}。"
     },
     "empty_mention_prompt": {
         "description": "空@提示词 (仅@Bot无内容)",
-        "type": "string",
+        "type": "text",
         "default": "（用户只是拍了拍你，没有说话，请根据当前场景自然互动）",
-        "hint": "当用户仅 @Bot 而没有输入内容时，将此文本作为用户的输入内容。"
+        "hint": "当用户仅 @Bot 无内容时使用。支持变量: {memory_block}, {sender_name}, {sender_id}。"
     },
     "active_speech_instruction": {
         "description": "主动插话指令模板 (关键词触发)",
-        "type": "string",
-        "default": "以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法：\"{original_prompt}\"\n\n【重要输出指令】\n你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，然后在 \"最终的罗莎回复:\" 后输出对用户的回复。",
-        "hint": "变量: {sender_name}, {sender_id}, {original_prompt}。"
+        "type": "text",
+        "default": "以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法：\"{original_prompt}\"\n\n{memory_block}\n\n【重要输出指令】\n你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，然后在 \"最终的罗莎回复:\" 后输出对用户的回复。",
+        "hint": "支持变量: {memory_block} (长期记忆), {sender_name}, {sender_id}, {original_prompt}。"
     },
     "model_frequency": {
         "description": "主动触发与频率控制",
