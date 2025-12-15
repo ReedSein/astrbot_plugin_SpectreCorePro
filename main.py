@@ -295,6 +295,29 @@ class SpectreCore(Star):
         if f"@{bot_self_id}" in msg_text: return True
         return False
 
+    def _validate_cot_response(self, text: str) -> Optional[str]:
+        """
+        通用 CoT 格式校验辅助方法 (DRY)
+        适用于: 主动回复、被动回复、空@唤醒、转发分析等所有 LLM 响应。
+        
+        Returns:
+            None: 校验通过
+            str: 错误信息 (用于触发重试)
+        """
+        # 条件 A: 宽松放行 (Loose Pass) - 如果没有 <罗莎内心OS>，不做强制要求
+        if "<罗莎内心OS>" not in text:
+            return None
+            
+        # 条件 B: 严格校验 (Strict Check) - 只要开了头，就必须完整闭合且包含关键字
+        has_close_tag = "</罗莎内心OS>" in text
+        # 使用正则匹配冒号 (支持中英文)
+        has_final_keyword = re.search(r"最终的罗莎回复[:：]", text)
+        
+        if has_close_tag and has_final_keyword:
+            return None
+            
+        return "调用失败: CoT 结构不完整，请检查 </罗莎内心OS> 闭合标签或 '最终的罗莎回复:' 关键字。"
+
     def _format_instruction(self, template: str, event: AstrMessageEvent, original_prompt: str) -> str:
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
@@ -381,21 +404,15 @@ class SpectreCore(Star):
             
             text = resp.completion_text or ""
             
-            # [Refactored Logic] CoT 格式软性校验
-            # 条件 A: 如果没有 <罗莎内心OS>，直接放行 (Loose Pass)
-            has_os_tag = "<罗莎内心OS>" in text
+            # [Refactored Logic] 统一调用通用校验逻辑 (DRY Principle)
+            # 适用于: Forward Analysis, Passive Reply, Active Reply, Empty Mention
+            error_msg = self._validate_cot_response(text)
             
-            if has_os_tag:
-                # 条件 B: 如果有 OS 标签，必须严格校验闭合标签和回复关键字
-                has_close_tag = "</罗莎内心OS>" in text
-                # 使用正则匹配冒号 (支持中英文)
-                has_final_keyword = re.search(r"最终的罗莎回复[:：]", text)
-                
-                if not has_close_tag or not has_final_keyword:
-                    logger.warning("[SpectreCore] CoT 格式校验失败 (有开头但无结尾或关键字)，触发重试。")
-                    # 构造特殊错误信息，诱导 astrbot_plugin_cot 触发重试
-                    resp.completion_text = "调用失败: CoT 结构不完整，请检查 </罗莎内心OS> 闭合标签或 '最终的罗莎回复:' 关键字。"
-                    return
+            if error_msg:
+                logger.warning(f"[SpectreCore] 格式校验未通过: {error_msg}")
+                # 构造特殊错误信息，诱导 astrbot_plugin_cot 触发重试
+                resp.completion_text = error_msg
+                return
 
             resp.completion_text = TextFilter.process_model_text(resp.completion_text, self.config)
         except Exception as e:
