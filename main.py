@@ -29,12 +29,14 @@ class SpectreCore(Star):
     # [优化] 默认模板配置：显式加入 XML 约束，防止主动回复时 LLM 只有人设却没指令，导致输出混乱
     DEFAULT_PASSIVE_INSTRUCTION = (
         '现在，群成员 {sender_name} (ID: {sender_id}) 正在对你说话，TA说："{original_prompt}"\n\n'
+        '{memory_block}\n\n'
         '【重要输出指令】\n'
         '你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，'
         '然后在 "最终的罗莎回复:" 后输出对用户的回复。'
     )
     DEFAULT_ACTIVE_INSTRUCTION = (
         '以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法："{original_prompt}"\n\n'
+        '{memory_block}\n\n'
         '【重要输出指令】\n'
         '你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，'
         '然后在 "最终的罗莎回复:" 后输出对用户的回复。'
@@ -321,9 +323,16 @@ class SpectreCore(Star):
     def _format_instruction(self, template: str, event: AstrMessageEvent, original_prompt: str) -> str:
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
+        
+        # 获取记忆变量
+        memory_block = ""
+        if hasattr(event, "state"):
+            memory_block = event.state.get("mnemosyne_data", "")
+
         instruction = template.replace("{sender_name}", str(sender_name)) \
                               .replace("{sender_id}", str(sender_id)) \
-                              .replace("{original_prompt}", str(original_prompt))
+                              .replace("{original_prompt}", str(original_prompt)) \
+                              .replace("{memory_block}", str(memory_block))
         return instruction
 
     @filter.on_llm_request(priority=90)
@@ -346,9 +355,16 @@ class SpectreCore(Star):
                     try:
                         s_name = event.get_sender_name() or "用户"
                         s_id = event.get_sender_id() or "unknown"
+                        
+                        # [Patch] 获取记忆变量
+                        memory_block = ""
+                        if hasattr(event, "state"):
+                            memory_block = event.state.get("mnemosyne_data", "")
+                            
                         # 直接作为 instruction 使用，不套用被动回复模板
                         instruction = raw_prompt.replace("{sender_name}", str(s_name))\
-                                                .replace("{sender_id}", str(s_id))
+                                                .replace("{sender_id}", str(s_id))\
+                                                .replace("{memory_block}", str(memory_block))
                     except Exception as e:
                         logger.warning(f"[SpectreCore] 空@提示词格式化失败: {e}")
                         instruction = raw_prompt
