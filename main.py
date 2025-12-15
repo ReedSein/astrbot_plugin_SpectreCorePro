@@ -381,18 +381,20 @@ class SpectreCore(Star):
             
             text = resp.completion_text or ""
             
-            # [全局校验]：只要文本里出现了 <罗莎内心OS>，就必须完整，否则视为失败
-            if "<罗莎内心OS>" in text:
-                if "</罗莎内心OS>" not in text or "最终的罗莎回复:" not in text:
-                     logger.warning("[SpectreCore] 检测到不完整的 CoT 结构，诱导 Retry 插件重试。")
-                     resp.completion_text = "调用失败: 响应中断或 XML 结构不完整"
-                     return
+            # [Refactored Logic] CoT 格式软性校验
+            # 条件 A: 如果没有 <罗莎内心OS>，直接放行 (Loose Pass)
+            has_os_tag = "<罗莎内心OS>" in text
             
-            # [Forward Analysis 专用校验]：不仅要完整，还必须存在
-            if getattr(event, "_is_forward_analysis", False):
-                if "<罗莎内心OS>" not in text:
-                    logger.warning("[SpectreCore] 转发分析缺失 XML，诱导 Retry 插件重试。")
-                    resp.completion_text = "调用失败: 转发分析缺失 <罗莎内心OS> 标签"
+            if has_os_tag:
+                # 条件 B: 如果有 OS 标签，必须严格校验闭合标签和回复关键字
+                has_close_tag = "</罗莎内心OS>" in text
+                # 使用正则匹配冒号 (支持中英文)
+                has_final_keyword = re.search(r"最终的罗莎回复[:：]", text)
+                
+                if not has_close_tag or not has_final_keyword:
+                    logger.warning("[SpectreCore] CoT 格式校验失败 (有开头但无结尾或关键字)，触发重试。")
+                    # 构造特殊错误信息，诱导 astrbot_plugin_cot 触发重试
+                    resp.completion_text = "调用失败: CoT 结构不完整，请检查 </罗莎内心OS> 闭合标签或 '最终的罗莎回复:' 关键字。"
                     return
 
             resp.completion_text = TextFilter.process_model_text(resp.completion_text, self.config)
