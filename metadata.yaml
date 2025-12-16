@@ -1,7 +1,7 @@
-name: spectrecorepro # 这是你的插件的唯一识别名。
+name: rosaspectrecorepro # 这是你的插件的唯一识别名。
 desc: 融合上下文增强、主动回复与深度转发分析的全能罗莎 # 插件简短描述
 help: 自动检测群聊消息并让罗莎进行回复，让群聊更加生动有趣。 # 插件的帮助信息
-version: v2.6.3 # 插件版本号。格式：v1.1.1 或者 v1.1
+version: v2.6.5 # 插件版本号。格式：v1.1.1 或者 v1.1
 author: ReedSein # 作者
 repo: https://github.com/ReedSein/astrbot_plugin_SpectreCorePro # 插件的仓库地址
-display_name: 🌟 SpectreCorePro
+display_name: 🌟 RosaSpectreCorePro
