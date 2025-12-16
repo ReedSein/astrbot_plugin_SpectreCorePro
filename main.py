@@ -31,14 +31,14 @@ class SpectreCore(Star):
         '现在，群成员 {sender_name} (ID: {sender_id}) 正在对你说话，TA说："{original_prompt}"\n\n'
         '{memory_block}\n\n'
         '【重要输出指令】\n'
-        '你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，'
+        '你必须启动【核心思维协议】，先在 <ROSAOS>...</ROSAOS> 中进行思考，'
         '然后在 "最终的罗莎回复:" 后输出对用户的回复。'
     )
     DEFAULT_ACTIVE_INSTRUCTION = (
         '以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法："{original_prompt}"\n\n'
         '{memory_block}\n\n'
         '【重要输出指令】\n'
-        '你必须启动【核心思维协议】，先在 <罗莎内心OS>...</罗莎内心OS> 中进行思考，'
+        '你必须启动【核心思维协议】，先在 <ROSAOS>...</ROSAOS> 中进行思考，'
         '然后在 "最终的罗莎回复:" 后输出对用户的回复。'
     )
 
@@ -75,9 +75,9 @@ class SpectreCore(Star):
 
 【最终输出格式提醒】
 你的最终输出必须严格遵守以下结构：
-<罗莎内心OS>
+<ROSAOS>
 （完整的七步思维链内容）
-</罗莎内心OS>
+</ROSAOS>
 最终的罗莎回复:
 （一个单一、不间断的段落，不超过500字）
 
@@ -94,9 +94,6 @@ class SpectreCore(Star):
         self.fr_enable_reply = self.config.get("fr_enable_reply", True)
         self.fr_waiting_message = self.config.get("fr_waiting_message", "嗯…让我看看你这个小家伙发了什么有趣的东西。")
         self.fr_max_text_length = 15000
-
-        # 正则预编译：用于兜底清除泄漏的 XML
-        self.SAFETY_NET_PATTERN = re.compile(r'<罗莎内心OS>.*?</罗莎内心OS>', re.DOTALL)
 
     @event_message_type(EventMessageType.GROUP_MESSAGE)
     async def on_group_message(self, event: AstrMessageEvent):
@@ -420,57 +417,27 @@ class SpectreCore(Star):
             
             text = resp.completion_text or ""
             
-            # [Refactored Logic] 统一调用通用校验逻辑 (DRY Principle)
-            # 适用于: Forward Analysis, Passive Reply, Active Reply, Empty Mention
-            error_msg = self._validate_cot_response(text)
+            # [Refactored Logic] CoT 格式软性校验 (支持中英文尖括号)
+            # 条件 A: 如果没有 <ROSAOS> 或 ＜ROSAOS＞，直接放行 (Loose Pass)
+            has_os_tag = re.search(r'[<＜]ROSAOS[>＞]', text)
             
-            if error_msg:
-                logger.warning(f"[SpectreCore] 格式校验未通过: {error_msg}")
-                # 构造特殊错误信息，诱导 astrbot_plugin_cot 触发重试
-                resp.completion_text = error_msg
-                return
+            if has_os_tag:
+                # 条件 B: 如果有 OS 标签，必须严格校验闭合标签和回复关键字
+                has_close_tag = re.search(r'[<＜]/ROSAOS[>＞]', text)
+                # 使用正则匹配冒号 (支持中英文)
+                has_final_keyword = re.search(r"最终的罗莎回复[:：]", text)
+                
+                if not has_close_tag or not has_final_keyword:
+                    logger.warning("[SpectreCore] CoT 格式校验失败 (有开头但无结尾或关键字)，触发重试。")
+                    # 构造特殊错误信息，诱导 astrbot_plugin_cot 触发重试
+                    resp.completion_text = "调用失败: CoT 结构不完整，请检查 </ROSAOS> 闭合标签或 '最终的罗莎回复:' 关键字。"
+                    return
 
             resp.completion_text = TextFilter.process_model_text(resp.completion_text, self.config)
         except Exception as e:
             logger.error(f"处理大模型回复错误: {e}")
 
-    # =========================================================================
-    # [核心防护网 2] 最终防泄漏兜底 (优先级极低 -999)
-    # =========================================================================
-    @filter.on_decorating_result(priority=-999)
-    async def _force_strip_cot_safety_net(self, event: AstrMessageEvent):
-        """
-        最后的防线：如果 Retry 插件因为 Key 丢失或其他原因没能剪掉 CoT，
-        这里会强制剪除，防止标签泄漏给用户。
-        """
-        try:
-            result = event.get_result()
-            if not result or not result.chain: return
-            
-            dirty = False
-            for comp in result.chain:
-                # [修正] 使用 Comp.Plain 代替错误的 Comp.Text
-                if isinstance(comp, Comp.Plain) and comp.text:
-                    if "<罗莎内心OS>" in comp.text:
-                        dirty = True
-                        logger.warning("[SpectreCore] 触发防泄漏兜底：Retry 插件未拦截，强制清理 CoT。")
-                        
-                        # 1. 尝试提取回复
-                        parts = re.split(r"最终的罗莎回复[:：]?\s*", comp.text)
-                        if len(parts) > 1:
-                            comp.text = parts[1].strip()
-                        else:
-                            # 2. 如果没找到回复标记，直接删掉标签内的内容
-                            comp.text = self.SAFETY_NET_PATTERN.sub("", comp.text).strip()
-            
-            if dirty:
-                # 再次清理可能残留的空行
-                for comp in result.chain:
-                    if isinstance(comp, Comp.Plain):
-                        comp.text = comp.text.strip()
-                        
-        except Exception as e:
-            logger.error(f"[SpectreCore] 防泄漏兜底异常: {e}")
+
 
     @filter.on_decorating_result()
     async def on_decorating_result(self, event: AstrMessageEvent):
