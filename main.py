@@ -428,7 +428,8 @@ class SpectreCore(Star):
                 fallback_prompt = f"{history_str}\n\n{instruction}" if history_str else instruction
                 req.prompt = fallback_prompt
                 
-                logger.info(f"🛡️ 降级 Prompt 预览:\n{fallback_prompt[:100]}...")
+                # [Visual Log] 展示完整的降级 Prompt (无省略)
+                logger.info(f"🛡️ 降级 Prompt 完整内容:\n{'-'*20}\n{fallback_prompt}\n{'-'*20}")
             
             if hasattr(event, "_spectre_history"): delattr(event, "_spectre_history")
 
