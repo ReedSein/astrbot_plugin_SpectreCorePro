@@ -415,6 +415,11 @@ class SpectreCore(Star):
             if not req.prompt:
                 return
 
+            # [Isolation] 逻辑隔离：仅当 System Prompt 包含 SpectreCore 特征 (ROSAOS) 时才介入
+            # 防止劫持其他插件的 LLM 请求
+            if "ROSAOS" not in getattr(req, "system_prompt", ""):
+                return
+
             # 3. 检查模型兼容性 (可选，目前依赖用户自行判断)
             # if "gpt" in str(req.model).lower(): return 
             
