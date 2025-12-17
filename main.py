@@ -389,10 +389,17 @@ class SpectreCore(Star):
             
             req.prompt = final_prompt
             
-            # [Visual Log] Prompt 组装蓝图
-            # 获取记忆长度用于展示
-            mem_data = event.state.get("mnemosyne_data", "")
-            mem_status = f"✅ 已注入 ({len(mem_data)} chars)" if mem_data else "⚪ 无记忆数据"
+            # [Fix] 从 Mnemosyne 插件实例安全获取数据
+            mem_data = ""
+            mnemosyne_plugin = self.context.plugin_manager.get_plugin("Mnemosyne")
+            # 兼容性尝试：如果显示名不同
+            if not mnemosyne_plugin:
+                mnemosyne_plugin = self.context.plugin_manager.get_plugin("astrbot_plugin_mnemosyne")
+                
+            if mnemosyne_plugin and hasattr(mnemosyne_plugin, "get_memory_data"):
+                mem_data = mnemosyne_plugin.get_memory_data(event.unified_msg_origin)
+            
+            mem_status = f"✅ 已注入 ({len(mem_data)} chars)" if mem_data else "⚪ 无记忆/获取失败"
             
             logger.info("\n" + "╔" + "═"*50 + "╗")
             logger.info(f"║ 🎭 [SpectreCore] Prompt 组装蓝图 ({log_tag})")
