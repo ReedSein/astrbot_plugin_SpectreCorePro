@@ -389,10 +389,19 @@ class SpectreCore(Star):
             
             req.prompt = final_prompt
             
-            # [Fix] 恢复日志打印
-            logger.info("="*30 + f" [SpectreCore Pro] Prompt 预览 ({log_tag}) " + "="*30)
-            logger.info(f"\n{final_prompt}")
-            logger.info("="*80)
+            # [Visual Log] Prompt 组装蓝图
+            # 获取记忆长度用于展示
+            mem_data = event.state.get("mnemosyne_data", "")
+            mem_status = f"✅ 已注入 ({len(mem_data)} chars)" if mem_data else "⚪ 无记忆数据"
+            
+            logger.info("\n" + "╔" + "═"*50 + "╗")
+            logger.info(f"║ 🎭 [SpectreCore] Prompt 组装蓝图 ({log_tag})")
+            logger.info("╠" + "═"*50 + "╣")
+            logger.info(f"║ 🧠 记忆模块: {mem_status}")
+            logger.info(f"║ 📜 历史长度: {len(history_str)} chars")
+            logger.info(f"║ 📝 指令模板: {len(instruction)} chars")
+            logger.info(f"║ 🚀 最终长度: {len(final_prompt)} chars")
+            logger.info("╚" + "═"*50 + "╝\n")
             
             if hasattr(event, "_spectre_history"): delattr(event, "_spectre_history")
 
