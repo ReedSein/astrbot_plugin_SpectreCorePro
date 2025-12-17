@@ -303,19 +303,21 @@ class SpectreCore(Star):
             None: 校验通过
             str: 错误信息 (用于触发重试)
         """
-        # 条件 A: 宽松放行 (Loose Pass) - 如果没有 <罗莎内心OS>，不做强制要求
-        if "<罗莎内心OS>" not in text:
+        # 条件 A: 宽松放行 (Loose Pass) - 如果没有 <ROSAOS> 或 ＜ROSAOS＞，不做强制要求
+        # 使用正则进行模糊匹配，兼容中英文括号
+        has_os_tag = re.search(r'[<＜]ROSAOS[>＞]', text)
+        if not has_os_tag:
             return None
             
         # 条件 B: 严格校验 (Strict Check) - 只要开了头，就必须完整闭合且包含关键字
-        has_close_tag = "</罗莎内心OS>" in text
+        has_close_tag = re.search(r'[<＜]/ROSAOS[>＞]', text)
         # 使用正则匹配冒号 (支持中英文)
         has_final_keyword = re.search(r"最终的罗莎回复[:：]", text)
         
         if has_close_tag and has_final_keyword:
             return None
             
-        return "调用失败: CoT 结构不完整，请检查 </罗莎内心OS> 闭合标签或 '最终的罗莎回复:' 关键字。"
+        return "调用失败: CoT 结构不完整，请检查 </ROSAOS> 闭合标签或 '最终的罗莎回复:' 关键字。"
 
     def _format_instruction(self, template: str, event: AstrMessageEvent, original_prompt: str) -> str:
         sender_name = event.get_sender_name() or "用户"
@@ -395,6 +397,48 @@ class SpectreCore(Star):
 
         except Exception as e:
             logger.error(f"[SpectreCore Pro] Prompt 组装失败: {e}")
+
+    @filter.on_llm_request(priority=80)
+    async def apply_cot_prefill(self, event: AstrMessageEvent, req: ProviderRequest):
+        """
+        [新增] 思维链预填充 (True CoT) 后处理 Handler
+        优先级调整为 80 (高于 CoT 插件的 70)，确保 CoT 插件记录的是"已预填充且Prompt置空"的状态。
+        这样 CoT 插件在重试时，能正确复现包含预填充的上下文。
+        """
+        try:
+            # 1. 检查配置开关
+            cot_cfg = self.config.get("cot_prefill", {})
+            if not cot_cfg.get("enable", False):
+                return
+
+            # 2. 检查是否有 Prompt (必须有 Prompt 才能进行封装)
+            if not req.prompt:
+                return
+
+            # 3. 检查模型兼容性 (可选，目前依赖用户自行判断)
+            # if "gpt" in str(req.model).lower(): return 
+            
+            # 4. 执行预填充逻辑
+            prefill_content = cot_cfg.get("content", "<ctrl94>thought\n")
+            
+            # A. 组装用户消息 (User)
+            # assemble_context 会处理 prompt 和 image_urls
+            user_msg = await req.assemble_context()
+            
+            # B. 插入上下文 (User -> Assistant Prefill)
+            req.contexts.append(user_msg)
+            req.contexts.append({
+                "role": "assistant",
+                "content": prefill_content
+            })
+            
+            # C. 销毁 Prompt，防止 Provider 重复组装
+            req.prompt = None
+            
+            logger.debug(f"[SpectreCore] 已应用 CoT 预填充: {prefill_content.strip()}")
+            
+        except Exception as e:
+            logger.error(f"[SpectreCore] CoT 预填充失败: {e}")
 
     @filter.after_message_sent()
     async def after_message_sent(self, event: AstrMessageEvent):
