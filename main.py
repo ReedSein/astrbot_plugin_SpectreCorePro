@@ -385,30 +385,50 @@ class SpectreCore(Star):
                 instruction = self._format_instruction(template, event, current_msg)
                 log_tag = "主动插话"
 
-            final_prompt = f"{history_str}\n\n{instruction}" if history_str else instruction
-            
-            req.prompt = final_prompt
-            
-            # [Fix] 从 Mnemosyne 插件实例安全获取数据
-            mem_data = ""
-            mnemosyne_plugin = self.context.plugin_manager.get_plugin("Mnemosyne")
-            # 兼容性尝试：如果显示名不同
-            if not mnemosyne_plugin:
-                mnemosyne_plugin = self.context.plugin_manager.get_plugin("astrbot_plugin_mnemosyne")
+            # [Robust Implementation] 强鲁棒性的 Prompt 组装与降级逻辑
+            try:
+                # 1. 尝试获取 Mnemosyne 插件实例
+                mnemosyne_plugin = None
+                all_stars = self.context.get_all_stars()
+                for star_meta in all_stars:
+                    if star_meta.name == "Mnemosyne" or star_meta.name == "astrbot_plugin_mnemosyne":
+                        mnemosyne_plugin = star_meta.plugin_instance
+                        break
                 
-            if mnemosyne_plugin and hasattr(mnemosyne_plugin, "get_memory_data"):
-                mem_data = mnemosyne_plugin.get_memory_data(event.unified_msg_origin)
-            
-            mem_status = f"✅ 已注入 ({len(mem_data)} chars)" if mem_data else "⚪ 无记忆/获取失败"
-            
-            logger.info("\n" + "╔" + "═"*50 + "╗")
-            logger.info(f"║ 🎭 [SpectreCore] Prompt 组装蓝图 ({log_tag})")
-            logger.info("╠" + "═"*50 + "╣")
-            logger.info(f"║ 🧠 记忆模块: {mem_status}")
-            logger.info(f"║ 📜 历史长度: {len(history_str)} chars")
-            logger.info(f"║ 📝 指令模板: {len(instruction)} chars")
-            logger.info(f"║ 🚀 最终长度: {len(final_prompt)} chars")
-            logger.info("╚" + "═"*50 + "╝\n")
+                # 2. 安全获取记忆数据
+                mem_data = ""
+                if mnemosyne_plugin and hasattr(mnemosyne_plugin, "get_memory_data"):
+                    mem_data = mnemosyne_plugin.get_memory_data(event.unified_msg_origin)
+                
+                # 3. 渲染模板 (Try Rendering)
+                # 使用 format_map 允许部分 key 缺失，或者手动 replace 更安全
+                rendered_prompt = instruction.replace("{memory_block}", mem_data)
+                
+                # 4. 组装最终 Prompt
+                final_prompt = f"{history_str}\n\n{rendered_prompt}" if history_str else rendered_prompt
+                
+                # [Visual Log] 成功组装
+                mem_status = f"✅ 已注入 ({len(mem_data)} chars)" if mem_data else "⚪ 无记忆/获取失败"
+                logger.info("\n" + "╔" + "═"*50 + "╗")
+                logger.info(f"║ 🎭 [SpectreCore] Prompt 组装成功")
+                logger.info("╠" + "═"*50 + "╣")
+                logger.info(f"║ 🧠 记忆模块: {mem_status}")
+                logger.info(f"║ 🚀 最终长度: {len(final_prompt)} chars")
+                logger.info("╚" + "═"*50 + "╝\n")
+                
+                req.prompt = final_prompt
+
+            except Exception as e:
+                # [Fallback] 降级策略
+                logger.error(f"❌ [SpectreCore] Prompt 组装发生严重错误: {e}")
+                logger.error(f"🔍 错误详情: {e}", exc_info=True)
+                logger.warning("⚠️ 已触发降级策略：使用原始 Instruction，忽略记忆模块。")
+                
+                # 降级：仅拼接历史和原始指令（不做任何变量替换）
+                fallback_prompt = f"{history_str}\n\n{instruction}" if history_str else instruction
+                req.prompt = fallback_prompt
+                
+                logger.info(f"🛡️ 降级 Prompt 预览:\n{fallback_prompt[:100]}...")
             
             if hasattr(event, "_spectre_history"): delattr(event, "_spectre_history")
 
