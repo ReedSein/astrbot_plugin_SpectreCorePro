@@ -289,7 +289,8 @@ class SpectreCore(Star):
         if not bot_self_id: return False
         for comp in event.message_obj.message:
             if isinstance(comp, At) and (str(comp.qq) == str(bot_self_id) or comp.qq == "all"): return True
-            elif isinstance(comp, Reply): return True
+            # [Fix] 移除 Reply 判定。引用消息本身不应视为显式触发 (除非配合 @)。
+            # elif isinstance(comp, Reply): return True 
         msg_text = event.get_message_outline() or ""
         if f"@{bot_self_id}" in msg_text: return True
         return False
