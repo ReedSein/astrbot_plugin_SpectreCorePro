@@ -433,8 +433,11 @@ class SpectreCore(Star):
             })
             
             # C. 销毁 Prompt，防止 Provider 重复组装
-            # [Fix] 使用空字符串代替 None，防止 Core 后续处理 (如 .replace) 报错
-            req.prompt = ""
+            # [Fix] 使用零宽空格 (\u200b) 代替空字符串
+            # 1. 防止 Core 后续处理 (.replace) 报错
+            # 2. 绕过 vllm_rerank_source 等组件的 "at least 1 character" 校验
+            # 3. 对 LLM 生成影响极小 (通常被忽略)
+            req.prompt = "\u200b"
             
             logger.debug(f"[SpectreCore] 已应用 CoT 预填充: {prefill_content.strip()}")
             
