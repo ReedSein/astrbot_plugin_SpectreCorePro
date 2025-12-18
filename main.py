@@ -92,6 +92,7 @@ class SpectreCore(Star):
         self.enable_forward_analysis = self.config.get("enable_forward_analysis", True)
         self.fr_enable_direct = self.config.get("fr_enable_direct", False)
         self.fr_enable_reply = self.config.get("fr_enable_reply", True)
+        self.fr_max_retries = self.config.get("fr_max_retries", 3)
         self.fr_waiting_message = self.config.get("fr_waiting_message", "嗯…让我看看你这个小家伙发了什么有趣的东西。")
         self.fr_max_text_length = 15000
 
@@ -178,12 +179,29 @@ class SpectreCore(Star):
         logger.info(f"[SpectreCore] 触发模式三：深度转发分析 (ForwardID: {forward_id})")
         yield event.chain_result([Comp.Reply(id=event.message_obj.message_id), Comp.Plain(self.fr_waiting_message)])
 
-        try:
-            extracted_texts, image_urls = await self._extract_forward_content(event, forward_id)
-            if not extracted_texts and not image_urls:
-                yield event.plain_result("无法提取到有效内容。")
-                return
+        extracted_texts, image_urls = [], []
+        
+        # 1. 重试循环：提取转发内容
+        for attempt in range(self.fr_max_retries):
+            try:
+                extracted_texts, image_urls = await self._extract_forward_content(event, forward_id)
+                if extracted_texts or image_urls:
+                    break # 成功提取，跳出循环
+            except Exception as e:
+                # [核心修改] 增加重试日志
+                if attempt < self.fr_max_retries - 1:
+                    logger.warning(f"分析失败: {e}，正在进行第 {attempt + 1}/{self.fr_max_retries} 次重试...")
+                    await asyncio.sleep(1)
+                else:
+                    logger.error(f"Forward Analysis Error (All {self.fr_max_retries} retries failed): {e}")
+                    yield event.plain_result(f"调用失败: {e}")
+                    return
 
+        if not extracted_texts and not image_urls:
+            yield event.plain_result("无法提取到有效内容。")
+            return
+
+        try:
             chat_records_str = "\n".join(extracted_texts)
             if len(chat_records_str) > self.fr_max_text_length:
                 chat_records_str = chat_records_str[:self.fr_max_text_length] + "\n\n[...内容截断...]"
@@ -213,8 +231,8 @@ class SpectreCore(Star):
             )
 
         except Exception as e:
-            logger.error(f"Forward Analysis Error: {e}")
-            yield event.plain_result(f"调用失败: {e}")
+            logger.error(f"Forward Analysis Prompt Construction Error: {e}")
+            yield event.plain_result(f"处理失败: {e}")
 
     async def _extract_forward_content(self, event, forward_id: str) -> tuple[list[str], list[str]]:
         client = event.bot
