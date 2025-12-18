@@ -163,6 +163,12 @@
         "default": true,
         "hint": "开启后，当群友回复某条合并转发消息并提问时，才会触发分析。推荐开启。"
     },
+    "fr_max_retries": {
+        "description": "转发内容提取重试次数",
+        "type": "int",
+        "default": 3,
+        "hint": "当平台抓取转发消息失败时，自动重试的次数。"
+    },
     "fr_waiting_message": {
         "description": "分析时的等待提示",
         "type": "string",
