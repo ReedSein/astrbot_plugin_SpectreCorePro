@@ -392,8 +392,16 @@ class SpectreCore(Star):
                 all_stars = self.context.get_all_stars()
                 for star_meta in all_stars:
                     if star_meta.name == "Mnemosyne" or star_meta.name == "astrbot_plugin_mnemosyne":
-                        mnemosyne_plugin = star_meta.plugin_instance
-                        break
+                        # 尝试多种属性名获取实例，兼容不同版本的 AstrBot
+                        if hasattr(star_meta, "plugin"):
+                            mnemosyne_plugin = star_meta.plugin
+                        elif hasattr(star_meta, "star"):
+                            mnemosyne_plugin = star_meta.star
+                        elif hasattr(star_meta, "plugin_instance"):
+                            mnemosyne_plugin = star_meta.plugin_instance
+                        
+                        if mnemosyne_plugin:
+                            break
                 
                 # 2. 安全获取记忆数据
                 mem_data = ""
