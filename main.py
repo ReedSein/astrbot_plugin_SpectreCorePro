@@ -342,15 +342,14 @@ class SpectreCore(Star):
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
         
-        # 获取记忆变量
-        memory_block = ""
-        if hasattr(event, "state"):
-            memory_block = event.state.get("mnemosyne_data", "")
-
+        # [Optimization] 移除失效的 event.state 读取
+        # 关键修正：不要在这里替换 {memory_block}，因为此时数据尚未获取。
+        # 必须保留占位符，以便 on_llm_request_custom 用真正的 Mnemosyne 数据进行注入。
+        
         instruction = template.replace("{sender_name}", str(sender_name)) \
                               .replace("{sender_id}", str(sender_id)) \
-                              .replace("{original_prompt}", str(original_prompt)) \
-                              .replace("{memory_block}", str(memory_block))
+                              .replace("{original_prompt}", str(original_prompt))
+                              
         return instruction
 
     @filter.on_llm_request(priority=90)
@@ -374,15 +373,9 @@ class SpectreCore(Star):
                         s_name = event.get_sender_name() or "用户"
                         s_id = event.get_sender_id() or "unknown"
                         
-                        # [Patch] 获取记忆变量
-                        memory_block = ""
-                        if hasattr(event, "state"):
-                            memory_block = event.state.get("mnemosyne_data", "")
-                            
-                        # 直接作为 instruction 使用，不套用被动回复模板
+                        # [Optimization] 仅格式化基础信息，保留 memory_block 占位符
                         instruction = raw_prompt.replace("{sender_name}", str(s_name))\
-                                                .replace("{sender_id}", str(s_id))\
-                                                .replace("{memory_block}", str(memory_block))
+                                                .replace("{sender_id}", str(s_id))
                     except Exception as e:
                         logger.warning(f"[SpectreCore] 空@提示词格式化失败: {e}")
                         instruction = raw_prompt
@@ -534,6 +527,14 @@ class SpectreCore(Star):
             
             text = resp.completion_text or ""
             
+            # [Fix] 1. 优先检测 <NO_RESPONSE> (忽略大小写, 兼容中英文括号及变体)
+            # 增强检测：使用正则 r'(?i)[<＜]\s*NO[-_\s]*RESPONSE\s*[>＞]' 确保极高鲁棒性
+            if re.search(r'(?i)[<＜]\s*NO[-_\s]*RESPONSE\s*[>＞]', text):
+                logger.info("[SpectreCore] 🛑 检测到静默信号 (Robust Match)，停止事件传播。")
+                event.stop_event()
+                resp.completion_text = ""
+                return
+            
             # [Refactored Logic] CoT 格式软性校验 (支持中英文尖括号)
             # 条件 A: 如果没有 <ROSAOS> 或 ＜ROSAOS＞，直接放行 (Loose Pass)
             has_os_tag = re.search(r'[<＜]ROSAOS[>＞]', text)
@@ -562,9 +563,11 @@ class SpectreCore(Star):
             result = event.get_result()
             if result and result.is_llm_result():
                 msg = "".join([comp.text for comp in result.chain if hasattr(comp, 'text')])
-                if "<NO_RESPONSE>" in msg:
-                    event.clear_result()
-                    logger.debug("触发 NO_RESPONSE，阻止发送")
+                # [Fix] 增强检测并正确停止事件，而不是清空结果导致下游插件崩溃
+                # 兼容中英文括号、空格、下划线变体
+                if re.search(r'(?i)[<＜]\s*NO[-_\s]*RESPONSE\s*[>＞]', msg):
+                    logger.info("[SpectreCore] Decorating 阶段检测到 NO_RESPONSE (Robust)，停止事件传播")
+                    event.stop_event()
         except Exception as e:
             logger.error(f"Decorating result error: {e}")
 
