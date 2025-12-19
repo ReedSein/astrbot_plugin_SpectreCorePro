@@ -132,6 +132,12 @@
                 "type": "bool",
                 "default": false
             },
+            "image_caption_provider_id": {
+                "description": "图片转述专用模型",
+                "type": "string",
+                "hint": "指定用于图片内容识别的视觉模型。留空则使用当前对话模型。",
+                "_special": "select_provider"
+            },
             "image_count": {
                 "description": "携带图片数量",
                 "type": "int",
