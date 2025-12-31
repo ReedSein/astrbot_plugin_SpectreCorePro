@@ -188,7 +188,9 @@ class HistoryStorage:
                             fname = f"{uuid.uuid4().hex}{ext}"
                             dest = os.path.join(images_dir, fname)
                             shutil.copy2(temp_file_path, dest)
-                            component.file = f"file:///{os.path.abspath(dest).replace('\\', '/')}"
+                            abs_dest = os.path.abspath(dest)
+                            abs_dest = abs_dest.replace("\\", "/")
+                            component.file = f"file:///{abs_dest}"
                     except: pass
         except: pass
 
