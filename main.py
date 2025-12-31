@@ -359,6 +359,31 @@ class SpectreCore(Star):
 
             history_str = getattr(event, "_spectre_history", "")
             current_msg = req.prompt or "[图片/非文本消息]"
+            mem_data = ""
+            mnemosyne_plugin = None
+
+            # 预获取 Mnemosyne 插件实例和记忆数据，避免对用户原始消息的二次污染
+            all_stars = self.context.get_all_stars()
+            for star_meta in all_stars:
+                if star_meta.name == "Mnemosyne" or star_meta.name == "astrbot_plugin_mnemosyne":
+                    # AstrBot 的 StarMetadata 使用 star_cls 保存实例
+                    if getattr(star_meta, "star_cls", None):
+                        mnemosyne_plugin = star_meta.star_cls
+                    elif hasattr(star_meta, "plugin"):
+                        mnemosyne_plugin = star_meta.plugin
+                    elif hasattr(star_meta, "star"):
+                        mnemosyne_plugin = star_meta.star
+                    elif hasattr(star_meta, "plugin_instance"):
+                        mnemosyne_plugin = star_meta.plugin_instance
+                    
+                    if mnemosyne_plugin:
+                        break
+
+            if mnemosyne_plugin and hasattr(mnemosyne_plugin, "get_memory_data"):
+                mem_data = mnemosyne_plugin.get_memory_data(event.unified_msg_origin) or ""
+                if mem_data and mem_data in current_msg:
+                    stripped = current_msg.replace(mem_data, "").strip()
+                    current_msg = stripped or current_msg
             
             instruction = ""
             log_tag = ""
@@ -398,28 +423,7 @@ class SpectreCore(Star):
 
             # [Robust Implementation] 强鲁棒性的 Prompt 组装与降级逻辑
             try:
-                # 1. 尝试获取 Mnemosyne 插件实例
-                mnemosyne_plugin = None
-                all_stars = self.context.get_all_stars()
-                for star_meta in all_stars:
-                    if star_meta.name == "Mnemosyne" or star_meta.name == "astrbot_plugin_mnemosyne":
-                        # 尝试多种属性名获取实例，兼容不同版本的 AstrBot
-                        if hasattr(star_meta, "plugin"):
-                            mnemosyne_plugin = star_meta.plugin
-                        elif hasattr(star_meta, "star"):
-                            mnemosyne_plugin = star_meta.star
-                        elif hasattr(star_meta, "plugin_instance"):
-                            mnemosyne_plugin = star_meta.plugin_instance
-                        
-                        if mnemosyne_plugin:
-                            break
-                
-                # 2. 安全获取记忆数据
-                mem_data = ""
-                if mnemosyne_plugin and hasattr(mnemosyne_plugin, "get_memory_data"):
-                    mem_data = mnemosyne_plugin.get_memory_data(event.unified_msg_origin)
-                
-                # 3. 渲染模板 (Try Rendering)
+                # 1. 渲染模板 (Try Rendering)
                 # 使用 format_map 允许部分 key 缺失，或者手动 replace 更安全
                 rendered_prompt = instruction.replace("{memory_block}", mem_data)
                 
@@ -434,6 +438,10 @@ class SpectreCore(Star):
                 logger.info(f"║ 🧠 记忆模块: {mem_status}")
                 logger.info(f"║ 🚀 最终长度: {len(final_prompt)} chars")
                 logger.info("╚" + "═"*50 + "╝\n")
+                # 完整打印最终提示词与记忆，方便后台排查触发与注入
+                if mem_data:
+                    logger.info("[SpectreCore] 记忆注入内容:\n%s", mem_data)
+                logger.info("[SpectreCore] 最终发送给 LLM 的 Prompt:\n%s", final_prompt)
                 
                 req.prompt = final_prompt
 
