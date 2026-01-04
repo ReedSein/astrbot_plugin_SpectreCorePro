@@ -38,7 +38,7 @@ class SpectreCore(Star):
         '示例：<DOSSIER_UPDATE>{"codename":"Le Soleil Noir (黑太阳)","type":"有趣B","emotion":"好奇","positioning":"试图用哲学掩饰空虚的笨拙小老鼠",'
         '"commentary":"我觉得他在好奇与迟疑间摇摆。","recent":["[2025-01-01] 首次互动，语气拘谨。★"],"recent_replace":{"2":"[2025-01-02] 记忆2改写"},'
         '"taboo":["✗ 别反复问我是AI吗 (2025-01-01)"],"weakness":["→ 渴望被认可"]}</DOSSIER_UPDATE>\n'
-        '编号说明: recent_replace 的 key 对应“记忆X”，1 起始；先替换再追加，超出上限仅保留最近5条。'
+        '编号说明: recent_replace 的 key 对应“记忆X”，1 起始；先替换再追加，超出上限仅保留最近5条。时间戳由系统自动补全，无需模型填写。'
     )
     DEFAULT_ACTIVE_INSTRUCTION = (
         '以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法："{original_prompt}"\n\n'
