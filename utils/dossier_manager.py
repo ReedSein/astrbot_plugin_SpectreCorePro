@@ -345,15 +345,16 @@ class UserDossierManager:
 
         return changed
 
-    async def extract_and_update(self, user_id: str, user_name: str, text: str) -> tuple[str, bool]:
+    async def extract_and_update(self, user_id: str, user_name: str, text: str) -> tuple[str, bool, str]:
         if not text:
-            return text, False
+            return text, False, ""
         matches = list(self.TAG_PATTERN.finditer(text))
         if not matches:
-            return text, False
+            return text, False, ""
 
         store = await self._load_store()
         profile = store.get(user_id) or self._default_profile(user_id, user_name)
+        before = json.loads(json.dumps(profile, ensure_ascii=False))
         changed = self._ensure_name(profile, user_name)
 
         for match in matches:
@@ -373,7 +374,16 @@ class UserDossierManager:
             store[user_id] = profile
             await self._save_store(store)
 
-        return cleaned_text, changed
+        return cleaned_text, changed, self._diff_log(before, profile) if changed else ""
+
+    @staticmethod
+    def _diff_log(before: Dict[str, Any], after: Dict[str, Any]) -> str:
+        diffs = []
+        fields = ["names", "codename", "type_line", "emotion", "positioning", "commentary", "recent", "taboo", "weakness"]
+        for f in fields:
+            if before.get(f) != after.get(f):
+                diffs.append(f"{f}: {before.get(f)} -> {after.get(f)}")
+        return "; ".join(diffs)
 
     async def update_profile_field(
         self,
@@ -386,6 +396,7 @@ class UserDossierManager:
         """按字段更新档案；列表字段支持按索引替换"""
         store = await self._load_store()
         profile = store.get(user_id) or self._default_profile(user_id, user_name)
+        before = json.loads(json.dumps(profile, ensure_ascii=False))
         changed = self._ensure_name(profile, user_name)
         f = field.lower()
 
@@ -447,4 +458,4 @@ class UserDossierManager:
             store[user_id] = profile
             await self._save_store(store)
 
-        return profile, changed
+        return profile, changed, self._diff_log(before, profile) if changed else ""
