@@ -593,11 +593,13 @@ class SpectreCore(Star):
             
             cleaned_text = text
             try:
-                cleaned_text, _ = await self.dossier_manager.extract_and_update(
+                cleaned_text, changed, diff_msg = await self.dossier_manager.extract_and_update(
                     str(event.get_sender_id() or ""),
                     event.get_sender_name() or "用户",
                     text,
                 )
+                if changed and diff_msg:
+                    logger.info(f"[SpectreCore] 档案更新: {diff_msg}")
             except Exception as exc:
                 logger.error(f"解析用户档案标签失败: {exc}")
                 cleaned_text = UserDossierManager.TAG_PATTERN.sub("", text).strip()
@@ -709,13 +711,15 @@ class SpectreCore(Star):
                 idx_int = int(parts[1])
                 full_value = parts[0].strip()
 
-        profile, changed = await self.dossier_manager.update_profile_field(
+        profile, changed, diff_msg = await self.dossier_manager.update_profile_field(
             uid, event.get_sender_name() or "用户", field, full_value, idx_int
         )
         if changed:
-            yield event.plain_result(
-                f"已更新 {field}。当前档案:\n{self.dossier_manager.format_profile(profile, section_for_reply)}"
-            )
+            text = f"已更新 {field}。"
+            if diff_msg:
+                text += f"变更: {diff_msg}"
+            text += f"\n当前档案:\n{self.dossier_manager.format_profile(profile, section_for_reply)}"
+            yield event.plain_result(text)
         else:
             yield event.plain_result("未修改任何内容，可能字段不支持或值相同。")
         
