@@ -641,7 +641,7 @@ class SpectreCore(Star):
         yield event.plain_result("\n".join(lines))
     
     @spectrecore.command("dossier")
-    async def dossier_show(self, event: AstrMessageEvent, user_id: str = None, section: str = "all"):
+    async def dossier_show(self, event: AstrMessageEvent, user_id: str = "", section: str = "all"):
         """查看档案，section 可选: all/identity/category/impression/recent/taboo/weakness"""
         if not event.is_admin():
             yield event.plain_result("你是不是搞错了自己的身份？此指令需要管理员权限。")
