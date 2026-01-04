@@ -7,6 +7,7 @@ from astrbot.api.event import filter
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.message_components import At, Reply
 import astrbot.api.message_components as Comp
+from astrbot.core.star.filter.command import GreedyStr
 from .utils import *
 import time
 
@@ -657,7 +658,7 @@ class SpectreCore(Star):
         yield event.plain_result(text)
 
     @spectrecore.command("dossier_edit")
-    async def dossier_edit(self, event: AstrMessageEvent, user_id: str, field: str, value: str, index: str = None, *value_tail: str):
+    async def dossier_edit(self, event: AstrMessageEvent, user_id: str, field: str, value: GreedyStr):
         """
         修订档案字段。
         field 支持: name/names, codename, type, emotion, positioning, commentary, recent, taboo, weakness
@@ -669,18 +670,10 @@ class SpectreCore(Star):
         if not user_id:
             yield event.plain_result("请提供 user_id。")
             return
-        full_value = " ".join([value, *value_tail]).strip()
+        full_value = (value or "").strip()
         if not full_value:
             yield event.plain_result("请提供 value。")
             return
-        idx_int = None
-        if index:
-            try:
-                idx_int = int(index)
-            except Exception:
-                yield event.plain_result("index 必须是数字。")
-                return
-
         field_norm = field.lower()
         allowed_fields = {
             "name", "names", "codename", "type", "emotion",
@@ -689,6 +682,13 @@ class SpectreCore(Star):
         if field_norm not in allowed_fields:
             yield event.plain_result("field 无效，可选: name/names,codename,type,emotion,positioning,commentary,recent,taboo,weakness")
             return
+
+        idx_int = None
+        if field_norm in {"recent", "taboo", "weakness"}:
+            parts = full_value.rsplit(" ", 1)
+            if len(parts) == 2 and parts[1].isdigit():
+                idx_int = int(parts[1])
+                full_value = parts[0].strip()
 
         profile, changed = await self.dossier_manager.update_profile_field(
             user_id, event.get_sender_name() or "用户", field, full_value, idx_int
