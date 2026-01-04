@@ -32,14 +32,24 @@ class SpectreCore(Star):
         '{memory_block}\n\n'
         '【重要输出指令】\n'
         '你必须启动【核心思维协议】，先在 <ROSAOS>...</ROSAOS> 中进行思考，'
-        '然后在 "最终的罗莎回复:" 后输出对用户的回复。'
+        '然后在 "最终的罗莎回复:" 后输出对用户的回复。\n'
+        '【档案更新要求】在回复末尾追加一行 <DOSSIER_UPDATE>{...}</DOSSIER_UPDATE>，内容为单行 JSON，无解释文字。字段固定: codename,type,emotion,positioning,commentary,recent[],taboo[],weakness[],recent_replace{}，缺项用空数组/空对象。\n'
+        '示例：<DOSSIER_UPDATE>{"codename":"Le Soleil Noir (黑太阳)","type":"有趣B","emotion":"好奇","positioning":"试图用哲学掩饰空虚的笨拙小老鼠",'
+        '"commentary":"我觉得他在好奇与迟疑间摇摆。","recent":["[2025-01-01] 首次互动，语气拘谨。★"],"recent_replace":{"2":"[2025-01-02] 记忆2改写"},'
+        '"taboo":["✗ 别反复问我是AI吗 (2025-01-01)"],"weakness":["→ 渴望被认可"]}</DOSSIER_UPDATE>\n'
+        '编号说明: recent_replace 的 key 对应“记忆X”，1 起始；先替换再追加，超出上限仅保留最近5条。'
     )
     DEFAULT_ACTIVE_INSTRUCTION = (
         '以上是最近的聊天记录。你决定主动参与讨论，并想就以下内容发表你的看法："{original_prompt}"\n\n'
         '{memory_block}\n\n'
         '【重要输出指令】\n'
         '你必须启动【核心思维协议】，先在 <ROSAOS>...</ROSAOS> 中进行思考，'
-        '然后在 "最终的罗莎回复:" 后输出对用户的回复。'
+        '然后在 "最终的罗莎回复:" 后输出对用户的回复。\n'
+        '【档案更新要求】在回复末尾追加一行 <DOSSIER_UPDATE>{...}</DOSSIER_UPDATE>，内容为单行 JSON，无解释文字。字段固定: codename,type,emotion,positioning,commentary,recent[],taboo[],weakness[],recent_replace{}，缺项用空数组/空对象。\n'
+        '示例：<DOSSIER_UPDATE>{"codename":"Le Soleil Noir (黑太阳)","type":"有趣B","emotion":"好奇","positioning":"试图用哲学掩饰空虚的笨拙小老鼠",'
+        '"commentary":"我觉得他在好奇与迟疑间摇摆。","recent":["[2025-01-01] 首次互动，语气拘谨。★"],"recent_replace":{"2":"[2025-01-02] 记忆2改写"},'
+        '"taboo":["✗ 别反复问我是AI吗 (2025-01-01)"],"weakness":["→ 渴望被认可"]}</DOSSIER_UPDATE>\n'
+        '编号说明: recent_replace 的 key 对应“记忆X”，1 起始；先替换再追加，超出上限仅保留最近5条。'
     )
 
     # Forward Reader 默认 Prompt (核心思维协议版)
@@ -88,6 +98,7 @@ class SpectreCore(Star):
         self.config = config
         HistoryStorage.init(config)
         ImageCaptionUtils.init(context, config)
+        self.dossier_manager = UserDossierManager(self)
         
         self.enable_forward_analysis = self.config.get("enable_forward_analysis", True)
         self.fr_enable_direct = self.config.get("fr_enable_direct", False)
@@ -338,18 +349,35 @@ class SpectreCore(Star):
             
         return "调用失败: CoT 结构不完整，请检查 </ROSAOS> 闭合标签或 '最终的罗莎回复:' 关键字。"
 
-    def _format_instruction(self, template: str, event: AstrMessageEvent, original_prompt: str) -> str:
+    def _format_instruction(
+        self,
+        template: str,
+        event: AstrMessageEvent,
+        original_prompt: str,
+        dossier_vars: Optional[Dict[str, str]] = None
+    ) -> str:
         sender_name = event.get_sender_name() or "用户"
         sender_id = event.get_sender_id() or "unknown"
-        
+
         # [Optimization] 移除失效的 event.state 读取
         # 关键修正：不要在这里替换 {memory_block}，因为此时数据尚未获取。
         # 必须保留占位符，以便 on_llm_request_custom 用真正的 Mnemosyne 数据进行注入。
-        
-        instruction = template.replace("{sender_name}", str(sender_name)) \
-                              .replace("{sender_id}", str(sender_id)) \
-                              .replace("{original_prompt}", str(original_prompt))
-                              
+        replacements = {
+            "sender_name": str(sender_name),
+            "sender_id": str(sender_id),
+            "user_id": str(sender_id),
+            "original_prompt": str(original_prompt),
+        }
+
+        if dossier_vars:
+            replacements.update({k: v for k, v in dossier_vars.items() if k != "first_interaction"})
+
+        instruction = template
+        for key, value in replacements.items():
+            if value is None:
+                continue
+            instruction = instruction.replace(f"{{{key}}}", str(value))
+
         return instruction
 
     @filter.on_llm_request(priority=90)
@@ -360,6 +388,10 @@ class SpectreCore(Star):
             history_str = getattr(event, "_spectre_history", "")
             current_msg = req.prompt or "[图片/非文本消息]"
             mem_data = ""
+            sender_name = event.get_sender_name() or "用户"
+            sender_id = str(event.get_sender_id() or "unknown")
+            dossier_profile = await self.dossier_manager.get_or_create_profile(sender_id, sender_name)
+            dossier_vars = self.dossier_manager.build_prompt_variables(dossier_profile)
             mnemosyne_plugin = None
 
             # 预获取 Mnemosyne 插件实例和记忆数据，避免对用户原始消息的二次污染
@@ -395,12 +427,7 @@ class SpectreCore(Star):
                 if self._is_empty_mention_only(event):
                     raw_prompt = self.config.get("empty_mention_prompt", "（用户只是拍了拍你，没有说话，请根据当前场景自然互动）")
                     try:
-                        s_name = event.get_sender_name() or "用户"
-                        s_id = event.get_sender_id() or "unknown"
-                        
-                        # [Optimization] 仅格式化基础信息，保留 memory_block 占位符
-                        instruction = raw_prompt.replace("{sender_name}", str(s_name))\
-                                                .replace("{sender_id}", str(s_id))
+                        instruction = self._format_instruction(raw_prompt, event, current_msg, dossier_vars)
                     except Exception as e:
                         logger.warning(f"[SpectreCore] 空@提示词格式化失败: {e}")
                         instruction = raw_prompt
@@ -411,14 +438,14 @@ class SpectreCore(Star):
                 # =======================================
                 else:
                     template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
-                    instruction = self._format_instruction(template, event, current_msg)
+                    instruction = self._format_instruction(template, event, current_msg, dossier_vars)
                     log_tag = "被动回复"
             else:
                 # =======================================
                 # Branch C: 主动插话 (Active Reply)
                 # =======================================
                 template = self.config.get("active_speech_instruction", self.DEFAULT_ACTIVE_INSTRUCTION)
-                instruction = self._format_instruction(template, event, current_msg)
+                instruction = self._format_instruction(template, event, current_msg, dossier_vars)
                 log_tag = "主动插话"
 
             # [Robust Implementation] 强鲁棒性的 Prompt 组装与降级逻辑
@@ -426,9 +453,8 @@ class SpectreCore(Star):
                 # 1. 渲染模板 (Try Rendering)
                 # 使用 format_map 允许部分 key 缺失，或者手动 replace 更安全
                 rendered_prompt = instruction.replace("{memory_block}", mem_data)
-                
-                # 4. 组装最终 Prompt
-                final_prompt = f"{history_str}\n\n{rendered_prompt}" if history_str else rendered_prompt
+                prompt_parts = [p for p in [history_str, rendered_prompt] if p]
+                final_prompt = "\n\n".join(prompt_parts)
                 
                 # [Visual Log] 成功组装
                 mem_status = f"✅ 已注入 ({len(mem_data)} chars)" if mem_data else "⚪ 无记忆/获取失败"
@@ -558,8 +584,19 @@ class SpectreCore(Star):
                     # 构造特殊错误信息，诱导 astrbot_plugin_cot 触发重试
                     resp.completion_text = "调用失败: CoT 结构不完整，请检查 </ROSAOS> 闭合标签或 '最终的罗莎回复:' 关键字。"
                     return
-
-            resp.completion_text = TextFilter.process_model_text(resp.completion_text, self.config)
+            
+            cleaned_text = text
+            try:
+                cleaned_text, _ = await self.dossier_manager.extract_and_update(
+                    str(event.get_sender_id() or ""),
+                    event.get_sender_name() or "用户",
+                    text,
+                )
+            except Exception as exc:
+                logger.error(f"解析用户档案标签失败: {exc}")
+                cleaned_text = UserDossierManager.TAG_PATTERN.sub("", text).strip()
+            
+            resp.completion_text = TextFilter.process_model_text(cleaned_text, self.config)
         except Exception as e:
             logger.error(f"处理大模型回复错误: {e}")
 
