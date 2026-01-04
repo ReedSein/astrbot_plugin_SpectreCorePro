@@ -14,7 +14,7 @@ class MessageUtils:
     """
         
     @staticmethod
-    async def format_history_for_llm(history_messages: List[AstrBotMessage], max_messages: int = 20) -> str:
+    async def format_history_for_llm(history_messages: List[AstrBotMessage], max_messages: int = 20, image_caption: bool = True) -> str:
         if not history_messages:
             return ""
         
@@ -42,7 +42,9 @@ class MessageUtils:
                     send_time = time_obj.strftime("%Y-%m-%d %H:%M:%S")
                 except: pass
             
-            message_content = await MessageUtils.outline_message_list(msg.message) if hasattr(msg, "message") and msg.message else ""
+            message_content = await MessageUtils.outline_message_list(
+                msg.message, counter={"i": 0}, image_caption=image_caption
+            ) if hasattr(msg, "message") and msg.message else ""
             
             message_text = f"发送者: {sender_name} (ID: {sender_id})\n"
             message_text += f"时间: {send_time}\n"
@@ -56,7 +58,11 @@ class MessageUtils:
         return formatted_text
            
     @staticmethod
-    async def outline_message_list(message_list: List[BaseMessageComponent], counter: Dict[str, int] | None = None) -> str:
+    async def outline_message_list(
+        message_list: List[BaseMessageComponent],
+        counter: Dict[str, int] | None = None,
+        image_caption: bool = True
+    ) -> str:
         outline = ""
         idx_ref = counter or {"i": 0}
         for i in message_list:
@@ -76,14 +82,17 @@ class MessageUtils:
                         idx_ref["i"] += 1
                         tag = f"[图片{idx_ref['i']}"
                         if image:
-                            if image.startswith("file:///"):
-                                image_path = image[8:]
-                                if not os.path.exists(image_path):
-                                    outline += f"{tag}: 文件过期]"
-                                    continue
-                                image = image_path
-                            caption = await ImageCaptionUtils.generate_image_caption(image)
-                            outline += f"{tag}: {caption}]" if caption else f"{tag}]"
+                            if image_caption:
+                                if isinstance(image, str) and image.startswith("file:///"):
+                                    image_path = image[8:]
+                                    if not os.path.exists(image_path):
+                                        outline += f"{tag}: 文件过期]"
+                                        continue
+                                    image = image_path
+                                caption = await ImageCaptionUtils.generate_image_caption(image)
+                                outline += f"{tag}: {caption}]" if caption else f"{tag}]"
+                            else:
+                                outline += f"{tag} 已上传]"
                         else:
                             outline += f"{tag}]"
                     except Exception:
@@ -114,7 +123,7 @@ class MessageUtils:
             
             reply_content = ""
             if hasattr(reply_component, 'chain') and reply_component.chain:
-                reply_content = await MessageUtils.outline_message_list(reply_component.chain)
+                reply_content = await MessageUtils.outline_message_list(reply_component.chain, counter={"i": 0}, image_caption=True)
             elif hasattr(reply_component, 'message_str') and reply_component.message_str:
                 reply_content = reply_component.message_str
             elif hasattr(reply_component, 'text') and reply_component.text:
