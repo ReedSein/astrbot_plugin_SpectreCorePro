@@ -626,12 +626,28 @@ class SpectreCore(Star):
 
     @spectrecore.command("help")
     async def help(self, event: AstrMessageEvent):
-        yield event.plain_result("SpectreCore Pro: \n/sc reset - 重置当前/指定历史\n/sc groupreset [群号] - 重置指定群\n/sc mute [分] - 闭嘴")
+        lines = [
+            "SpectreCore Pro 指令列表：",
+            "/sc help - 查看指令列表",
+            "/sc reset [群号] - 重置当前会话或指定群历史（需管理员）",
+            "/sc groupreset <群号> - 重置指定群历史（需管理员）",
+            "/sc mute <分钟> - 临时静默（需管理员）",
+            "/sc unmute - 解除静默（需管理员）",
+            "/sc callllm - 直接触发 LLM 调用（管理员）",
+            "/sc dossier [user_id] [section] - 查看档案，section: all/identity/category/impression/recent/taboo/weakness（管理员）",
+            "/sc dossier_edit <user_id> <field> <value> [index] - 修订档案，field: name/names,codename,type,emotion,positioning,commentary,recent,taboo,weakness；index 仅用于列表替换（管理员）",
+        ]
+        yield event.plain_result("\n".join(lines))
     
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("dossier")
     async def dossier_show(self, event: AstrMessageEvent, user_id: str = None, section: str = "all"):
         """查看档案，section 可选: all/identity/category/impression/recent/taboo/weakness"""
+        section = (section or "all").lower()
+        allowed_sections = {"all", "identity", "category", "impression", "recent", "taboo", "weakness"}
+        if section not in allowed_sections:
+            yield event.plain_result("section 无效，可选: all/identity/category/impression/recent/taboo/weakness")
+            return
         uid = user_id or str(event.get_sender_id() or "")
         name = event.get_sender_name() or "用户"
         profile = await self.dossier_manager.get_or_create_profile(uid, name)
@@ -646,6 +662,9 @@ class SpectreCore(Star):
         field 支持: name/names, codename, type, emotion, positioning, commentary, recent, taboo, weakness
         index 可选（正整数），仅对 recent/taboo/weakness 生效，用于替换指定编号。
         """
+        if not user_id:
+            yield event.plain_result("请提供 user_id。")
+            return
         idx_int = None
         if index:
             try:
@@ -653,6 +672,15 @@ class SpectreCore(Star):
             except Exception:
                 yield event.plain_result("index 必须是数字。")
                 return
+
+        field_norm = field.lower()
+        allowed_fields = {
+            "name", "names", "codename", "type", "emotion",
+            "positioning", "commentary", "recent", "taboo", "weakness", "comment"
+        }
+        if field_norm not in allowed_fields:
+            yield event.plain_result("field 无效，可选: name/names,codename,type,emotion,positioning,commentary,recent,taboo,weakness")
+            return
 
         profile, changed = await self.dossier_manager.update_profile_field(
             user_id, event.get_sender_name() or "用户", field, value, idx_int
