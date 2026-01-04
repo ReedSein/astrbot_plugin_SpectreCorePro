@@ -144,6 +144,24 @@
                 "default": "请直接简短描述这张图片",
                 "hint": "调用视觉模型生成图片说明时使用的提示词。"
             },
+            "caption_cache_persist": {
+                "description": "持久化图片转述缓存",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后将在 data/chat_history/image_captions 下缓存图片转述结果，避免重复调用模型。"
+            },
+            "caption_cache_days": {
+                "description": "转述缓存保留天数",
+                "type": "int",
+                "default": 7,
+                "hint": "持久化转述缓存的有效期（天）。"
+            },
+            "caption_cache_limit": {
+                "description": "转述缓存条数上限",
+                "type": "int",
+                "default": 200,
+                "hint": "单会话缓存的最大记录数，超过后按时间裁剪。"
+            },
             "image_count": {
                 "description": "携带图片数量",
                 "type": "int",
