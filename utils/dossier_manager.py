@@ -30,8 +30,8 @@ class UserDossierManager:
         self.star = star
 
     @staticmethod
-    def _today() -> str:
-        return datetime.datetime.now().strftime("%Y-%m-%d")
+    def _now() -> str:
+        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     async def _load_store(self) -> Dict[str, Any]:
         try:
@@ -49,7 +49,7 @@ class UserDossierManager:
             logger.error(f"保存用户档案失败: {exc}")
 
     def _default_profile(self, user_id: str, user_name: str) -> Dict[str, Any]:
-        recent_entry = f"[{self._today()}] 第一次互动。★"
+        recent_entry = f"[{self._now()}] 第一次互动。★"
         names = [user_name] if user_name else []
         return {
             "user_id": str(user_id),
@@ -210,6 +210,15 @@ class UserDossierManager:
             return [str(i).strip() for i in value if str(i).strip()]
         return []
 
+    def _normalize_recent_entries(self, entries: List[str]) -> List[str]:
+        normed = []
+        for item in entries or []:
+            text = str(item).strip()
+            if not text:
+                continue
+            normed.append(f"[{self._now()}] {text}")
+        return normed
+
     def _apply_index_replace(self, base: List[str], replace_map: Any, limit: int) -> tuple[List[str], bool]:
         if not isinstance(replace_map, dict):
             return base, False
@@ -326,9 +335,10 @@ class UserDossierManager:
             self.MAX_RECENT,
         )
         if replaced:
-            profile["recent"] = recent
+            profile["recent"] = self._normalize_recent_entries(recent)
             changed = True
         recent = self._merge_list(profile.get("recent", []), updates.get("recent"), self.MAX_RECENT)
+        recent = self._normalize_recent_entries(recent)
         if recent != profile.get("recent"):
             profile["recent"] = recent
             changed = True
@@ -423,10 +433,11 @@ class UserDossierManager:
             if index and index > 0:
                 arr, repl = self._apply_index_replace(profile.get("recent", []), {index: value}, self.MAX_RECENT)
                 if repl:
-                    profile["recent"] = arr
+                    profile["recent"] = self._normalize_recent_entries(arr)
                     changed = True
             else:
                 arr = self._merge_list(profile.get("recent", []), [value], self.MAX_RECENT)
+                arr = self._normalize_recent_entries(arr)
                 if arr != profile.get("recent"):
                     profile["recent"] = arr
                     changed = True
