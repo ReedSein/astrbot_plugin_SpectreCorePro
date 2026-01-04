@@ -56,8 +56,9 @@ class MessageUtils:
         return formatted_text
            
     @staticmethod
-    async def outline_message_list(message_list: List[BaseMessageComponent]) -> str:
+    async def outline_message_list(message_list: List[BaseMessageComponent], counter: Dict[str, int] | None = None) -> str:
         outline = ""
+        idx_ref = counter or {"i": 0}
         for i in message_list:
             try:
                 component_type = getattr(i, 'type', None)
@@ -72,18 +73,21 @@ class MessageUtils:
                 elif component_type == "image" or isinstance(i, Image):
                     try:
                         image = i.file if i.file else i.url
+                        idx_ref["i"] += 1
+                        tag = f"[图片{idx_ref['i']}"
                         if image:
                             if image.startswith("file:///"):
                                 image_path = image[8:]
                                 if not os.path.exists(image_path):
-                                    outline += f"[图片: 文件过期]"
+                                    outline += f"{tag}: 文件过期]"
                                     continue
                                 image = image_path
                             caption = await ImageCaptionUtils.generate_image_caption(image)
-                            outline += f"[图片: {caption}]" if caption else f"[图片]"
+                            outline += f"{tag}: {caption}]" if caption else f"{tag}]"
                         else:
-                            outline += f"[图片]"
-                    except: outline += "[图片]"
+                            outline += f"{tag}]"
+                    except Exception:
+                        outline += "[图片]"
                 elif component_type == "face" or isinstance(i, Face):
                     outline += f"[表情:{getattr(i, 'id', '')}]"
                 elif component_type == "at" or isinstance(i, At):
