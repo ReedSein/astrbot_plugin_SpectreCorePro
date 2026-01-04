@@ -5,6 +5,7 @@ import datetime
 import threading
 import aiohttp
 import json
+import os
 try:
     from zoneinfo import ZoneInfo
 except ImportError:
@@ -299,6 +300,29 @@ class LLMUtils:
             instruction += "\n3. 请直接生成回复。"
         system_parts.append(instruction)
 
+        # 预取图片用于决定是否禁用文字转述
+        image_urls = []
+        image_notes = []
+        img_check_count = config.get("image_processing", {}).get("image_count", 0)
+        
+        if img_check_count > 0 and all_msgs:
+            check_range = 15 
+            msgs_to_check = all_msgs[-check_range:] if len(all_msgs) > check_range else all_msgs
+            for msg in reversed(msgs_to_check):
+                if hasattr(msg, "message") and msg.message:
+                    for comp in msg.message:
+                        if isinstance(comp, Image) and (comp.file or getattr(comp, "url", None)):
+                            img_src = comp.file or comp.url
+                            image_urls.append(img_src)
+                            note_idx = len(image_urls)
+                            basename = img_src
+                            if isinstance(img_src, str):
+                                basename = os.path.basename(img_src)
+                            note_name = basename or f"img_{note_idx}"
+                            image_notes.append(f"图片{note_idx}({note_name})")
+                            if len(image_urls) >= img_check_count: break
+                if len(image_urls) >= img_check_count: break
+
         final_system_prompt = "\n\n".join(system_parts)
 
         history_str = ""
@@ -335,7 +359,11 @@ class LLMUtils:
             
             merged_list.sort(key=lambda x: getattr(x, 'timestamp', 0))
             
-            fmt = await MessageUtils.format_history_for_llm(merged_list, max_messages=999)
+            fmt = await MessageUtils.format_history_for_llm(
+                merged_list,
+                max_messages=999,
+                image_caption=not bool(image_urls)
+            )
             if fmt:
                 history_str = "以下是最近的聊天记录：\n" + fmt
         else:
@@ -346,6 +374,7 @@ class LLMUtils:
         current_msg = event.get_message_outline() or "[非文本消息]"
 
         image_urls = []
+        image_notes = []
         img_check_count = config.get("image_processing", {}).get("image_count", 0)
         
         if img_check_count > 0 and all_msgs:
@@ -354,13 +383,24 @@ class LLMUtils:
             for msg in reversed(msgs_to_check):
                 if hasattr(msg, "message") and msg.message:
                     for comp in msg.message:
-                        if isinstance(comp, Image) and comp.file:
-                            image_urls.append(comp.file)
+                        if isinstance(comp, Image) and (comp.file or getattr(comp, "url", None)):
+                            img_src = comp.file or comp.url
+                            image_urls.append(img_src)
+                            note_idx = len(image_urls)
+                            basename = img_src
+                            if isinstance(img_src, str):
+                                basename = os.path.basename(img_src)
+                            note_name = basename or f"img_{note_idx}"
+                            image_notes.append(f"图片{note_idx}({note_name})")
                             if len(image_urls) >= img_check_count: break
                 if len(image_urls) >= img_check_count: break
             
             if image_urls:
-                final_system_prompt += f"\n\n[System]: 上下文中包含了最近的 {len(image_urls)} 张图片供参考。"
+                notes = ", ".join(image_notes)
+                final_system_prompt += (
+                    f"\n\n[ImageRefs]: 最近上传的图片（按顺序传给模型）: {notes}。"
+                    " 若需描述，请依赖视觉输入；请勿臆造未提供的图片内容。"
+                )
 
         func_tools_mgr = context.get_llm_tool_manager() if config.get("use_func_tool", False) else None
 
