@@ -584,6 +584,11 @@ class SpectreCore(Star):
                     # 构造特殊错误信息，诱导 astrbot_plugin_cot 触发重试
                     resp.completion_text = "调用失败: CoT 结构不完整，请检查 </ROSAOS> 闭合标签或 '最终的罗莎回复:' 关键字。"
                     return
+
+            if UserDossierManager.has_incomplete_tag(text):
+                logger.warning("[SpectreCore] 检测到档案更新标签不完整，触发重试。")
+                resp.completion_text = "error: dossier update tag incomplete"
+                return
             
             cleaned_text = text
             try:
