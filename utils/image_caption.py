@@ -1,6 +1,10 @@
 from astrbot.api.all import *
-from typing import Optional
+from typing import Optional, Dict, Any
 import asyncio
+import os
+import json
+import hashlib
+import time
 
 class ImageCaptionUtils:
     """
@@ -14,13 +18,97 @@ class ImageCaptionUtils:
     config = None
     # 图片描述缓存
     caption_cache = {}
+    cache_dir = None
     
     @staticmethod
     def init(context: Context, config: AstrBotConfig):
         """初始化图片转述工具类，保存context和config引用"""
         ImageCaptionUtils.context = context
         ImageCaptionUtils.config = config
+        base = os.path.join(os.getcwd(), "data", "chat_history", "image_captions")
+        ImageCaptionUtils.cache_dir = base
+        os.makedirs(base, exist_ok=True)
     
+    @staticmethod
+    def _hash_image(image: str) -> str:
+        h = hashlib.sha1()
+        h.update(str(image).encode("utf-8"))
+        return h.hexdigest()
+
+    @staticmethod
+    def _cache_path(platform: str, chat_type: str, chat_id: str) -> str:
+        safe_platform = platform or "unknown"
+        safe_type = chat_type or "group"
+        safe_chat = str(chat_id or "unknown")
+        path = os.path.join(ImageCaptionUtils.cache_dir, safe_platform, safe_type)
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, f"{safe_chat}.json")
+
+    @staticmethod
+    def _load_cache(path: str) -> Dict[str, Any]:
+        if not os.path.exists(path): return {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def _save_cache(path: str, data: Dict[str, Any]) -> None:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logger.error(f"保存图片转述缓存失败: {e}")
+
+    @staticmethod
+    def _prune_cache(path: str, max_age_days: int, max_items: int) -> None:
+        try:
+            data = ImageCaptionUtils._load_cache(path)
+            if not data: return
+            now = time.time()
+            changed = False
+            # 删除过期
+            expire_ts = now - max_age_days * 86400
+            for k in list(data.keys()):
+                ts = data[k].get("ts", 0)
+                if ts < expire_ts:
+                    data.pop(k, None)
+                    changed = True
+            # 超出数量则按时间排序保留最新
+            if len(data) > max_items > 0:
+                sorted_items = sorted(data.items(), key=lambda kv: kv[1].get("ts", 0), reverse=True)
+                data = dict(sorted_items[:max_items])
+                changed = True
+            if changed:
+                ImageCaptionUtils._save_cache(path, data)
+        except Exception: pass
+
+    @staticmethod
+    def get_cached_caption(image: str, platform: str, is_private: bool, chat_id: str) -> Optional[str]:
+        path = ImageCaptionUtils._cache_path(platform, "private" if is_private else "group", chat_id)
+        data = ImageCaptionUtils._load_cache(path)
+        hashed = ImageCaptionUtils._hash_image(image)
+        item = data.get(hashed)
+        if item:
+            return item.get("caption")
+        return None
+
+    @staticmethod
+    def set_cached_caption(image: str, caption: str, platform: str, is_private: bool, chat_id: str) -> None:
+        path = ImageCaptionUtils._cache_path(platform, "private" if is_private else "group", chat_id)
+        data = ImageCaptionUtils._load_cache(path)
+        hashed = ImageCaptionUtils._hash_image(image)
+        data[hashed] = {"caption": caption, "ts": time.time()}
+        # 清理策略
+        cfg = ImageCaptionUtils.config.get("image_processing", {})
+        max_age = int(cfg.get("caption_cache_days", 7))
+        max_items = int(cfg.get("caption_cache_limit", 200))
+        ImageCaptionUtils._prune_cache(path, max_age, max_items)
+        ImageCaptionUtils._save_cache(path, data)
+
     @staticmethod
     async def generate_image_caption(
             image: str, # 图片的base64编码或URL
@@ -40,7 +128,7 @@ class ImageCaptionUtils:
         if image in ImageCaptionUtils.caption_cache:
             logger.debug(f"命中图片描述缓存: {image[:50]}...")
             return ImageCaptionUtils.caption_cache[image]
-            
+        
         # 获取配置
         config = ImageCaptionUtils.config
         context = ImageCaptionUtils.context
@@ -48,6 +136,17 @@ class ImageCaptionUtils:
         image_processing_config = config.get("image_processing", {})
         if not image_processing_config.get("use_image_caption", False):
             return None
+
+        persistent_caption = None
+        try:
+            if image_processing_config.get("caption_cache_persist", True):
+                persistent_caption = ImageCaptionUtils.get_cached_caption(image, "", False, "")
+        except Exception:
+            persistent_caption = None
+
+        if persistent_caption:
+            ImageCaptionUtils.caption_cache[image] = persistent_caption
+            return persistent_caption
 
         provider_id = image_processing_config.get("image_caption_provider_id", "")
         # 获取提供商
@@ -79,6 +178,11 @@ class ImageCaptionUtils:
             if caption:
                  ImageCaptionUtils.caption_cache[image] = caption
                  logger.debug(f"缓存图片描述: {image[:50]}... -> {caption}")
+                 try:
+                     if image_processing_config.get("caption_cache_persist", True):
+                         ImageCaptionUtils.set_cached_caption(image, caption, "", False, "")
+                 except Exception as e:
+                     logger.warning(f"写入持久化转述缓存失败: {e}")
                  
             return caption
         except asyncio.TimeoutError:
