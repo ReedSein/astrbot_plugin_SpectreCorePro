@@ -212,11 +212,15 @@ class UserDossierManager:
 
     def _normalize_recent_entries(self, entries: List[str]) -> List[str]:
         normed = []
+        ts_pattern = re.compile(r"^\[\d{4}-\d{2}-\d{2}(?: [^\]]+)?\]\s*")
         for item in entries or []:
             text = str(item).strip()
             if not text:
                 continue
-            normed.append(f"[{self._now()}] {text}")
+            if ts_pattern.match(text):
+                normed.append(text)
+            else:
+                normed.append(f"[{self._now()}] {text}")
         return normed
 
     def _apply_index_replace(self, base: List[str], replace_map: Any, limit: int) -> tuple[List[str], bool]:
