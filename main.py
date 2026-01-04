@@ -634,15 +634,17 @@ class SpectreCore(Star):
             "/sc mute <分钟> - 临时静默（需管理员）",
             "/sc unmute - 解除静默（需管理员）",
             "/sc callllm - 直接触发 LLM 调用（管理员）",
-            "/sc dossier [user_id] [section] - 查看档案，section: all/identity/category/impression/recent/taboo/weakness（管理员）",
-            "/sc dossier_edit <user_id> <field> <value> [index] - 修订档案，field: name/names,codename,type,emotion,positioning,commentary,recent,taboo,weakness；index 仅用于列表替换（管理员）",
+            "/sc dossier [user_id] [section] - 查看档案（需管理员），section: all/identity/category/impression/recent/taboo/weakness",
+            "/sc dossier_edit <user_id> <field> <value> [index] - 修订档案（需管理员），field: name/names,codename,type,emotion,positioning,commentary,recent,taboo,weakness；index 仅用于列表替换",
         ]
         yield event.plain_result("\n".join(lines))
     
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("dossier")
     async def dossier_show(self, event: AstrMessageEvent, user_id: str = None, section: str = "all"):
         """查看档案，section 可选: all/identity/category/impression/recent/taboo/weakness"""
+        if not event.is_admin():
+            yield event.plain_result("你是不是搞错了自己的身份？此指令需要管理员权限。")
+            return
         section = (section or "all").lower()
         allowed_sections = {"all", "identity", "category", "impression", "recent", "taboo", "weakness"}
         if section not in allowed_sections:
@@ -654,7 +656,6 @@ class SpectreCore(Star):
         text = self.dossier_manager.format_profile(profile, section)
         yield event.plain_result(text)
 
-    @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("dossier_edit")
     async def dossier_edit(self, event: AstrMessageEvent, user_id: str, field: str, value: str, index: str = None, *value_tail: str):
         """
@@ -662,6 +663,9 @@ class SpectreCore(Star):
         field 支持: name/names, codename, type, emotion, positioning, commentary, recent, taboo, weakness
         index 可选（正整数），仅对 recent/taboo/weakness 生效，用于替换指定编号。
         """
+        if not event.is_admin():
+            yield event.plain_result("你是不是搞错了自己的身份？此指令需要管理员权限。")
+            return
         if not user_id:
             yield event.plain_result("请提供 user_id。")
             return
