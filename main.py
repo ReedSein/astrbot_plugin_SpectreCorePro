@@ -683,6 +683,21 @@ class SpectreCore(Star):
             yield event.plain_result("field 无效，可选: name/names,codename,type,emotion,positioning,commentary,recent,taboo,weakness")
             return
 
+        section_map = {
+            "name": "identity",
+            "names": "identity",
+            "codename": "identity",
+            "type": "category",
+            "emotion": "category",
+            "positioning": "impression",
+            "commentary": "impression",
+            "comment": "impression",
+            "recent": "recent",
+            "taboo": "taboo",
+            "weakness": "weakness",
+        }
+        section_for_reply = section_map.get(field_norm, "all")
+
         idx_int = None
         if field_norm in {"recent", "taboo", "weakness"}:
             parts = full_value.rsplit(" ", 1)
@@ -694,7 +709,9 @@ class SpectreCore(Star):
             user_id, event.get_sender_name() or "用户", field, full_value, idx_int
         )
         if changed:
-            yield event.plain_result(f"已更新 {field}。当前档案:\n{self.dossier_manager.format_profile(profile, field if field != 'names' else 'identity')}")
+            yield event.plain_result(
+                f"已更新 {field}。当前档案:\n{self.dossier_manager.format_profile(profile, section_for_reply)}"
+            )
         else:
             yield event.plain_result("未修改任何内容，可能字段不支持或值相同。")
         
