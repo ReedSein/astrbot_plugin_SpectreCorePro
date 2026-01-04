@@ -656,7 +656,7 @@ class SpectreCore(Star):
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("dossier_edit")
-    async def dossier_edit(self, event: AstrMessageEvent, user_id: str, field: str, value: str, index: str = None):
+    async def dossier_edit(self, event: AstrMessageEvent, user_id: str, field: str, value: str, index: str = None, *value_tail: str):
         """
         修订档案字段。
         field 支持: name/names, codename, type, emotion, positioning, commentary, recent, taboo, weakness
@@ -664,6 +664,10 @@ class SpectreCore(Star):
         """
         if not user_id:
             yield event.plain_result("请提供 user_id。")
+            return
+        full_value = " ".join([value, *value_tail]).strip()
+        if not full_value:
+            yield event.plain_result("请提供 value。")
             return
         idx_int = None
         if index:
@@ -683,7 +687,7 @@ class SpectreCore(Star):
             return
 
         profile, changed = await self.dossier_manager.update_profile_field(
-            user_id, event.get_sender_name() or "用户", field, value, idx_int
+            user_id, event.get_sender_name() or "用户", field, full_value, idx_int
         )
         if changed:
             yield event.plain_result(f"已更新 {field}。当前档案:\n{self.dossier_manager.format_profile(profile, field if field != 'names' else 'identity')}")
