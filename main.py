@@ -622,6 +622,40 @@ class SpectreCore(Star):
     @spectrecore.command("help")
     async def help(self, event: AstrMessageEvent):
         yield event.plain_result("SpectreCore Pro: \n/sc reset - 重置当前/指定历史\n/sc groupreset [群号] - 重置指定群\n/sc mute [分] - 闭嘴")
+    
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @spectrecore.command("dossier")
+    async def dossier_show(self, event: AstrMessageEvent, user_id: str = None, section: str = "all"):
+        """查看档案，section 可选: all/identity/category/impression/recent/taboo/weakness"""
+        uid = user_id or str(event.get_sender_id() or "")
+        name = event.get_sender_name() or "用户"
+        profile = await self.dossier_manager.get_or_create_profile(uid, name)
+        text = self.dossier_manager.format_profile(profile, section)
+        yield event.plain_result(text)
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @spectrecore.command("dossier_edit")
+    async def dossier_edit(self, event: AstrMessageEvent, user_id: str, field: str, value: str, index: str = None):
+        """
+        修订档案字段。
+        field 支持: name/names, codename, type, emotion, positioning, commentary, recent, taboo, weakness
+        index 可选（正整数），仅对 recent/taboo/weakness 生效，用于替换指定编号。
+        """
+        idx_int = None
+        if index:
+            try:
+                idx_int = int(index)
+            except Exception:
+                yield event.plain_result("index 必须是数字。")
+                return
+
+        profile, changed = await self.dossier_manager.update_profile_field(
+            user_id, event.get_sender_name() or "用户", field, value, idx_int
+        )
+        if changed:
+            yield event.plain_result(f"已更新 {field}。当前档案:\n{self.dossier_manager.format_profile(profile, field if field != 'names' else 'identity')}")
+        else:
+            yield event.plain_result("未修改任何内容，可能字段不支持或值相同。")
         
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("reset")
