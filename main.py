@@ -651,7 +651,7 @@ class SpectreCore(Star):
         if section not in allowed_sections:
             yield event.plain_result("section 无效，可选: all/identity/category/impression/recent/taboo/weakness")
             return
-        uid = user_id or str(event.get_sender_id() or "")
+        uid = (user_id or str(event.get_sender_id() or "")).strip()
         name = event.get_sender_name() or "用户"
         profile = await self.dossier_manager.get_or_create_profile(uid, name)
         text = self.dossier_manager.format_profile(profile, section)
@@ -669,6 +669,10 @@ class SpectreCore(Star):
             return
         if not user_id:
             yield event.plain_result("请提供 user_id。")
+            return
+        uid = str(user_id).strip()
+        if not uid:
+            yield event.plain_result("请提供有效的 user_id。")
             return
         full_value = (value or "").strip()
         if not full_value:
@@ -706,7 +710,7 @@ class SpectreCore(Star):
                 full_value = parts[0].strip()
 
         profile, changed = await self.dossier_manager.update_profile_field(
-            user_id, event.get_sender_name() or "用户", field, full_value, idx_int
+            uid, event.get_sender_name() or "用户", field, full_value, idx_int
         )
         if changed:
             yield event.plain_result(
