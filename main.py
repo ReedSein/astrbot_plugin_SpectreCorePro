@@ -615,12 +615,44 @@ class SpectreCore(Star):
         try:
             result = event.get_result()
             if result and result.is_llm_result():
-                msg = "".join([comp.text for comp in result.chain if hasattr(comp, 'text')])
+                if not result.chain:
+                    return
+                plain_text = "".join(
+                    [comp.text for comp in result.chain if isinstance(comp, Comp.Plain)]
+                )
+                if not plain_text:
+                    return
                 # [Fix] 增强检测并正确停止事件，而不是清空结果导致下游插件崩溃
                 # 兼容中英文括号、空格、下划线变体
-                if re.search(r'(?i)[<＜]\s*NO[-_\s]*RESPONSE\s*[>＞]', msg):
+                if re.search(r'(?i)[<＜]\s*NO[-_\s]*RESPONSE\s*[>＞]', plain_text):
                     logger.info("[SpectreCore] Decorating 阶段检测到 NO_RESPONSE (Robust)，停止事件传播")
                     event.stop_event()
+                    return
+
+                if UserDossierManager.TAG_PATTERN.search(plain_text):
+                    cleaned_text, changed, diff_msg = await self.dossier_manager.extract_and_update(
+                        str(event.get_sender_id() or ""),
+                        event.get_sender_name() or "用户",
+                        plain_text,
+                    )
+                    if changed and diff_msg:
+                        logger.info(f"[SpectreCore] 档案更新: {diff_msg}")
+
+                    if all(isinstance(comp, Comp.Plain) for comp in result.chain):
+                        result.chain.clear()
+                        if cleaned_text:
+                            result.chain.append(Comp.Plain(cleaned_text))
+                    else:
+                        for comp in result.chain:
+                            if isinstance(comp, Comp.Plain):
+                                comp.text = UserDossierManager.TAG_PATTERN.sub(
+                                    "", comp.text
+                                ).strip()
+                        result.chain = [
+                            comp
+                            for comp in result.chain
+                            if not (isinstance(comp, Comp.Plain) and not comp.text)
+                        ]
         except Exception as e:
             logger.error(f"Decorating result error: {e}")
 
