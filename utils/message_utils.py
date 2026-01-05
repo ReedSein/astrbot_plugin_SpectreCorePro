@@ -21,6 +21,7 @@ class MessageUtils:
         platform_name: str = "",
         is_private: bool = False,
         chat_id: str = "",
+        uploaded_images: set[str] | None = None,
     ) -> str:
         if not history_messages:
             return ""
@@ -56,6 +57,7 @@ class MessageUtils:
                 platform_name=platform_name,
                 is_private=is_private,
                 chat_id=chat_id,
+                uploaded_images=uploaded_images,
             ) if hasattr(msg, "message") and msg.message else ""
             
             message_text = f"发送者: {sender_name} (ID: {sender_id})\n"
@@ -77,9 +79,11 @@ class MessageUtils:
         platform_name: str = "",
         is_private: bool = False,
         chat_id: str = "",
+        uploaded_images: set[str] | None = None,
     ) -> str:
         outline = ""
         idx_ref = counter or {"i": 0}
+        uploaded_images = uploaded_images or set()
         for i in message_list:
             try:
                 component_type = getattr(i, 'type', None)
@@ -87,7 +91,10 @@ class MessageUtils:
                     component_type = i.__class__.__name__.lower()
                 
                 if component_type == "reply" or isinstance(i, Reply):
-                    outline += await MessageUtils._format_reply_component(i)
+                    outline += await MessageUtils._format_reply_component(
+                        i,
+                        uploaded_images=uploaded_images,
+                    )
                     continue
                 elif component_type == "plain" or isinstance(i, Plain):
                     outline += i.text
@@ -97,6 +104,19 @@ class MessageUtils:
                         idx_ref["i"] += 1
                         tag = f"[图片{idx_ref['i']}"
                         if image:
+                            raw_image = image
+                            is_uploaded = False
+                            if uploaded_images:
+                                is_uploaded = raw_image in uploaded_images
+                                if (
+                                    not is_uploaded
+                                    and isinstance(raw_image, str)
+                                    and raw_image.startswith("file:///")
+                                ):
+                                    is_uploaded = raw_image[8:] in uploaded_images
+                            if is_uploaded:
+                                outline += f"{tag} 已上传]"
+                                continue
                             if image_caption:
                                 if isinstance(image, str) and image.startswith("file:///"):
                                     image_path = image[8:]
@@ -116,7 +136,7 @@ class MessageUtils:
                                         image, platform_name, is_private, chat_id
                                     )
                             else:
-                                outline += f"{tag} 已上传]"
+                                outline += f"{tag}]"
                         else:
                             outline += f"{tag}]"
                     except Exception:
@@ -138,7 +158,10 @@ class MessageUtils:
         return outline
 
     @staticmethod
-    async def _format_reply_component(reply_component: Reply) -> str:
+    async def _format_reply_component(
+        reply_component: Reply,
+        uploaded_images: set[str] | None = None,
+    ) -> str:
         try:
             sender_id = getattr(reply_component, 'sender_id', '')
             sender_nickname = getattr(reply_component, 'sender_nickname', '')
@@ -154,6 +177,7 @@ class MessageUtils:
                     platform_name="",
                     is_private=False,
                     chat_id="",
+                    uploaded_images=uploaded_images,
                 )
             elif hasattr(reply_component, 'message_str') and reply_component.message_str:
                 reply_content = reply_component.message_str
