@@ -671,6 +671,7 @@ class SpectreCore(Star):
             "/sc callllm - 直接触发 LLM 调用（管理员）",
             "/sc dossier [user_id] [section] - 查看档案（需管理员），section: all/identity/category/impression/recent/taboo/weakness",
             "/sc dossier_edit <user_id> <field> <value> [index] - 修订档案（需管理员），field: name/names,codename,type,emotion,positioning,commentary,recent,taboo,weakness；index 仅用于列表替换",
+            "/sc dossier_del <user_id> <field> <index> - 删除条目（需管理员），field: names/recent/taboo/weakness",
         ]
         yield event.plain_result("\n".join(lines))
     
@@ -761,6 +762,56 @@ class SpectreCore(Star):
             yield event.plain_result(text)
         else:
             yield event.plain_result("未修改任何内容，可能字段不支持或值相同。")
+
+    @spectrecore.command("dossier_del")
+    async def dossier_del(self, event: AstrMessageEvent, user_id: str, field: str, index: str):
+        """删除档案列表条目。"""
+        if not event.is_admin():
+            yield event.plain_result("你是不是搞错了自己的身份？此指令需要管理员权限。")
+            return
+        if not user_id:
+            yield event.plain_result("请提供 user_id。")
+            return
+        uid = str(user_id).strip()
+        if not uid:
+            yield event.plain_result("请提供有效的 user_id。")
+            return
+        field_norm = (field or "").lower()
+        if field_norm not in {"names", "name", "recent", "memory", "taboo", "weakness"}:
+            yield event.plain_result("field 无效，可选: names/recent/taboo/weakness")
+            return
+        if not index or not str(index).isdigit():
+            yield event.plain_result("index 无效，请提供正整数编号。")
+            return
+        idx_int = int(str(index))
+        if idx_int <= 0:
+            yield event.plain_result("index 无效，请提供正整数编号。")
+            return
+
+        section_map = {
+            "names": "identity",
+            "name": "identity",
+            "recent": "recent",
+            "memory": "recent",
+            "taboo": "taboo",
+            "weakness": "weakness",
+        }
+        section_for_reply = section_map.get(field_norm, "all")
+
+        profile, changed, diff_msg = await self.dossier_manager.delete_profile_item(
+            uid, field_norm, idx_int
+        )
+        if profile is None:
+            yield event.plain_result("暂无档案。")
+            return
+        if changed:
+            text = f"已删除 {field}#{idx_int}。"
+            if diff_msg:
+                text += f"变更: {diff_msg}"
+            text += f"\n当前档案:\n{self.dossier_manager.format_profile(profile, section_for_reply)}"
+            yield event.plain_result(text)
+        else:
+            yield event.plain_result("未删除任何内容，可能编号不存在。")
         
     @filter.permission_type(filter.PermissionType.ADMIN)
     @spectrecore.command("reset")
