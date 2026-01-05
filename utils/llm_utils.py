@@ -252,6 +252,30 @@ class LLMUtils:
         chat_id = event.get_group_id() if not is_private else event.get_sender_id()
         user_id = event.get_sender_id()
         bot_self_id = str(event.get_self_id())
+
+        # 特例：引用图片且 @Bot 时，若图片未上传且无转述，则先同步转述
+        try:
+            if not is_private and hasattr(event.message_obj, "message"):
+                bot_id = bot_self_id
+                at_me = any(
+                    isinstance(c, At) and (str(c.qq) == bot_id or c.qq == "all")
+                    for c in event.message_obj.message
+                )
+                if at_me:
+                    for comp in event.message_obj.message:
+                        if isinstance(comp, Reply) and getattr(comp, "chain", None):
+                                    for r_comp in comp.chain:
+                                        if isinstance(r_comp, Image) and (r_comp.file or getattr(r_comp, "url", None)):
+                                            img_src = r_comp.file or r_comp.url
+                                            if not ImageCaptionUtils.get_cached_caption(img_src, platform_name, is_private, chat_id):
+                                                await ImageCaptionUtils.generate_image_caption(
+                                                    img_src,
+                                                    platform_name=platform_name,
+                                                    is_private=is_private,
+                                                    chat_id=chat_id,
+                                        )
+        except Exception as e:
+            logger.warning(f"引用图片转述预处理失败: {e}")
         
         all_msgs = []
         try:
@@ -362,7 +386,10 @@ class LLMUtils:
             fmt = await MessageUtils.format_history_for_llm(
                 merged_list,
                 max_messages=999,
-                image_caption=not bool(image_urls)
+                image_caption=not bool(image_urls),
+                platform_name=platform_name,
+                is_private=is_private,
+                chat_id=str(chat_id),
             )
             if fmt:
                 history_str = "以下是最近的聊天记录：\n" + fmt
