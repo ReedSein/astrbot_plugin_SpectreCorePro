@@ -324,10 +324,12 @@ class LLMUtils:
             instruction += "\n3. 请直接生成回复。"
         system_parts.append(instruction)
 
-        # 预取图片用于决定是否禁用文字转述
+        # 预取图片用于上传与提示
+        image_processing_cfg = config.get("image_processing", {})
+        use_image_caption = bool(image_processing_cfg.get("use_image_caption", False))
         image_urls = []
         image_notes = []
-        img_check_count = config.get("image_processing", {}).get("image_count", 0)
+        img_check_count = image_processing_cfg.get("image_count", 0)
         
         if img_check_count > 0 and all_msgs:
             check_range = 15 
@@ -346,6 +348,15 @@ class LLMUtils:
                             image_notes.append(f"图片{note_idx}({note_name})")
                             if len(image_urls) >= img_check_count: break
                 if len(image_urls) >= img_check_count: break
+
+        uploaded_images = set()
+        for img in image_urls:
+            if not img:
+                continue
+            img_str = str(img)
+            uploaded_images.add(img_str)
+            if img_str.startswith("file:///"):
+                uploaded_images.add(img_str[8:])
 
         final_system_prompt = "\n\n".join(system_parts)
 
@@ -386,10 +397,11 @@ class LLMUtils:
             fmt = await MessageUtils.format_history_for_llm(
                 merged_list,
                 max_messages=999,
-                image_caption=not bool(image_urls),
+                image_caption=use_image_caption,
                 platform_name=platform_name,
                 is_private=is_private,
                 chat_id=str(chat_id),
+                uploaded_images=uploaded_images,
             )
             if fmt:
                 history_str = "以下是最近的聊天记录：\n" + fmt
@@ -400,34 +412,12 @@ class LLMUtils:
 
         current_msg = event.get_message_outline() or "[非文本消息]"
 
-        image_urls = []
-        image_notes = []
-        img_check_count = config.get("image_processing", {}).get("image_count", 0)
-        
-        if img_check_count > 0 and all_msgs:
-            check_range = 15 
-            msgs_to_check = all_msgs[-check_range:] if len(all_msgs) > check_range else all_msgs
-            for msg in reversed(msgs_to_check):
-                if hasattr(msg, "message") and msg.message:
-                    for comp in msg.message:
-                        if isinstance(comp, Image) and (comp.file or getattr(comp, "url", None)):
-                            img_src = comp.file or comp.url
-                            image_urls.append(img_src)
-                            note_idx = len(image_urls)
-                            basename = img_src
-                            if isinstance(img_src, str):
-                                basename = os.path.basename(img_src)
-                            note_name = basename or f"img_{note_idx}"
-                            image_notes.append(f"图片{note_idx}({note_name})")
-                            if len(image_urls) >= img_check_count: break
-                if len(image_urls) >= img_check_count: break
-            
-            if image_urls:
-                notes = ", ".join(image_notes)
-                final_system_prompt += (
-                    f"\n\n[ImageRefs]: 最近上传的图片（按顺序传给模型）: {notes}。"
-                    " 若需描述，请依赖视觉输入；请勿臆造未提供的图片内容。"
-                )
+        if image_urls:
+            notes = ", ".join(image_notes)
+            final_system_prompt += (
+                f"\n\n[ImageRefs]: 最近上传的图片（按顺序传给模型）: {notes}。"
+                " 若需描述，请依赖视觉输入；请勿臆造未提供的图片内容。"
+            )
 
         func_tools_mgr = context.get_llm_tool_manager() if config.get("use_func_tool", False) else None
 
