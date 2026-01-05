@@ -19,6 +19,9 @@ class ImageCaptionUtils:
     # 图片描述缓存
     caption_cache = {}
     cache_dir = None
+    _pending: set[str] = set()
+    start_time: float = 0.0
+    _sema: asyncio.Semaphore | None = None
     
     @staticmethod
     def init(context: Context, config: AstrBotConfig):
@@ -28,6 +31,10 @@ class ImageCaptionUtils:
         base = os.path.join(os.getcwd(), "data", "chat_history", "image_captions")
         ImageCaptionUtils.cache_dir = base
         os.makedirs(base, exist_ok=True)
+        ImageCaptionUtils.start_time = time.time()
+        conc = int(config.get("image_processing", {}).get("caption_concurrency", 2))
+        conc = 1 if conc <= 0 else conc
+        ImageCaptionUtils._sema = asyncio.Semaphore(conc)
     
     @staticmethod
     def _hash_image(image: str) -> str:
@@ -62,6 +69,103 @@ class ImageCaptionUtils:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"保存图片转述缓存失败: {e}")
+
+    @staticmethod
+    async def _wait_and_caption(image: str, platform_name: str, is_private: bool, chat_id: str):
+        try:
+            from .llm_utils import LLMUtils  # 延迟导入，避免循环依赖
+        except Exception:
+            LLMUtils = None
+
+        # 如果 LLM 正在处理，等待空闲（最长 60s）
+        for _ in range(60):
+            try:
+                if not LLMUtils or not LLMUtils.is_llm_in_progress(platform_name, is_private, chat_id):
+                    break
+            except Exception:
+                break
+            await asyncio.sleep(1)
+
+        try:
+            sema = ImageCaptionUtils._sema
+            if sema:
+                async with sema:
+                    await ImageCaptionUtils.generate_image_caption(
+                        image,
+                        platform_name=platform_name,
+                        is_private=is_private,
+                        chat_id=chat_id,
+                    )
+            else:
+                await ImageCaptionUtils.generate_image_caption(
+                    image,
+                    platform_name=platform_name,
+                    is_private=is_private,
+                    chat_id=chat_id,
+                )
+        finally:
+            ImageCaptionUtils._pending.discard(ImageCaptionUtils._hash_image(image))
+
+    @staticmethod
+    def schedule_caption(image: str, platform_name: str, is_private: bool, chat_id: str):
+        """后台调度图片转述；命中缓存或正在排队则直接返回。"""
+        cfg = ImageCaptionUtils.config.get("image_processing", {}) if ImageCaptionUtils.config else {}
+        if not cfg.get("use_image_caption", False):
+            return
+        hashed = ImageCaptionUtils._hash_image(image)
+        if hashed in ImageCaptionUtils._pending:
+            return
+        if ImageCaptionUtils.get_cached_caption(image, platform_name, is_private, chat_id):
+            return
+        ImageCaptionUtils._pending.add(hashed)
+        asyncio.create_task(
+            ImageCaptionUtils._wait_and_caption(image, platform_name, is_private, chat_id)
+        )
+
+    @staticmethod
+    async def _wait_and_caption(image: str, platform_name: str, is_private: bool, chat_id: str):
+        try:
+            from .llm_utils import LLMUtils  # 延迟导入避免循环
+        except Exception:
+            LLMUtils = None
+
+        # 若 LLM 正在处理该会话，等待空闲或超时
+        for _ in range(60):
+            try:
+                if not LLMUtils or not LLMUtils.is_llm_in_progress(platform_name, is_private, chat_id):
+                    break
+            except Exception:
+                break
+            await asyncio.sleep(1)
+
+        try:
+            await ImageCaptionUtils.generate_image_caption(
+                image,
+                platform_name=platform_name,
+                is_private=is_private,
+                chat_id=chat_id,
+            )
+        finally:
+            ImageCaptionUtils._pending.discard(ImageCaptionUtils._hash_image(image))
+
+    @staticmethod
+    def schedule_caption(image: str, platform_name: str, is_private: bool, chat_id: str, msg_ts: float | None = None):
+        """后台调度图片转述（幂等）。若命中缓存/正在转述则不重复。"""
+        cfg = ImageCaptionUtils.config.get("image_processing", {}) if ImageCaptionUtils.config else {}
+        if not cfg.get("use_image_caption", False):
+            return
+        # 插件重启后，仅处理新的图片
+        if msg_ts is not None and msg_ts < ImageCaptionUtils.start_time:
+            return
+        hashed = ImageCaptionUtils._hash_image(image)
+        if hashed in ImageCaptionUtils._pending:
+            return
+        if ImageCaptionUtils.get_cached_caption(image, platform_name, is_private, chat_id):
+            return
+        ImageCaptionUtils._pending.add(hashed)
+        asyncio.create_task(
+            ImageCaptionUtils._wait_and_caption(image, platform_name, is_private, chat_id)
+        )
 
     @staticmethod
     def _prune_cache(path: str, max_age_days: int, max_items: int) -> None:
@@ -111,9 +215,12 @@ class ImageCaptionUtils:
 
     @staticmethod
     async def generate_image_caption(
-            image: str, # 图片的base64编码或URL
-            timeout: int = 30
-        ) -> Optional[str]:
+        image: str,
+        timeout: int = 30,
+        platform_name: str = "",
+        is_private: bool = False,
+        chat_id: str = "",
+    ) -> Optional[str]:
         """
         为单张图片生成文字描述
         
@@ -140,7 +247,9 @@ class ImageCaptionUtils:
         persistent_caption = None
         try:
             if image_processing_config.get("caption_cache_persist", True):
-                persistent_caption = ImageCaptionUtils.get_cached_caption(image, "", False, "")
+                persistent_caption = ImageCaptionUtils.get_cached_caption(
+                    image, platform_name, is_private, chat_id
+                )
         except Exception:
             persistent_caption = None
 
@@ -180,7 +289,9 @@ class ImageCaptionUtils:
                  logger.debug(f"缓存图片描述: {image[:50]}... -> {caption}")
                  try:
                      if image_processing_config.get("caption_cache_persist", True):
-                         ImageCaptionUtils.set_cached_caption(image, caption, "", False, "")
+                         ImageCaptionUtils.set_cached_caption(
+                             image, caption, platform_name, is_private, chat_id
+                         )
                  except Exception as e:
                      logger.warning(f"写入持久化转述缓存失败: {e}")
                  
