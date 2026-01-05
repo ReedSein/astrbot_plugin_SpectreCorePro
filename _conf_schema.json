@@ -162,6 +162,12 @@
                 "default": 200,
                 "hint": "单会话缓存的最大记录数，超过后按时间裁剪。"
             },
+            "caption_concurrency": {
+                "description": "转述并发上限",
+                "type": "int",
+                "default": 2,
+                "hint": "后台图片转述的最大并发数（<=0 时按 1 处理），超出部分排队等待。"
+            },
             "image_count": {
                 "description": "携带图片数量",
                 "type": "int",
