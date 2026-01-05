@@ -97,6 +97,52 @@ class HistoryStorage:
         except Exception as e:
             logger.error(f"保存消息历史记录失败: {e}")
             return False
+
+    @staticmethod
+    async def retry_uncaptioned_images(platform_name: str, is_private_chat: bool, chat_id: str, max_scan: int = 30) -> None:
+        """
+        在 LLM 调用结束后，为近期未转述成功的图片再发起一次转述。
+        - 已有转述缓存的图片不会重复
+        - 插件重启前的图片不会被转述（依赖 schedule_caption 的 start_time/时间戳判断）
+        """
+        try:
+            if not HistoryStorage.config:
+                return
+            if is_private_chat:
+                if not HistoryStorage.config.get("enabled_private", False):
+                    return
+            else:
+                enabled_groups = [str(g) for g in HistoryStorage.config.get("enabled_groups", [])]
+                if str(chat_id) not in enabled_groups:
+                    return
+            history = HistoryStorage.get_history(platform_name, is_private_chat, chat_id) or []
+            if not history:
+                return
+            recent = history[-max_scan:] if len(history) > max_scan else history
+            for msg in recent:
+                try:
+                    msg_ts = getattr(msg, "timestamp", None)
+                    if msg_ts is None or msg_ts < ImageCaptionUtils.start_time:
+                        continue
+                    if not hasattr(msg, "message") or not msg.message:
+                        continue
+                    for comp in msg.message:
+                        if isinstance(comp, Image) and (comp.file or getattr(comp, "url", None)):
+                            img_src = comp.file or comp.url
+                            ImageCaptionUtils.schedule_caption(
+                                img_src, platform_name, is_private_chat, chat_id, msg_ts
+                            )
+                        elif isinstance(comp, Reply) and getattr(comp, "chain", None):
+                            for r in comp.chain:
+                                if isinstance(r, Image) and (r.file or getattr(r, "url", None)):
+                                    img_src = r.file or r.url
+                                    ImageCaptionUtils.schedule_caption(
+                                        img_src, platform_name, is_private_chat, chat_id, msg_ts
+                                    )
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.error(f"重试图片转述失败: {e}")
     
     @staticmethod
     def is_chat_enabled(event: AstrMessageEvent) -> bool:
