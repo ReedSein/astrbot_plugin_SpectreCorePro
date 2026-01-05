@@ -474,3 +474,51 @@ class UserDossierManager:
             await self._save_store(store)
 
         return profile, changed, self._diff_log(before, profile) if changed else ""
+
+    async def delete_profile_item(
+        self,
+        user_id: str,
+        field: str,
+        index: int,
+    ) -> tuple[Dict[str, Any] | None, bool, str]:
+        """删除列表字段中的指定条目（names/recent/taboo/weakness）。"""
+        store = await self._load_store()
+        profile = store.get(user_id)
+        if not profile:
+            return None, False, ""
+        before = json.loads(json.dumps(profile, ensure_ascii=False))
+        changed = False
+        f = field.lower()
+        if f in ("names", "name"):
+            arr = list(profile.get("names", []))
+            if 1 <= index <= len(arr):
+                arr.pop(index - 1)
+                profile["names"] = arr
+                changed = True
+        elif f in ("recent", "memory"):
+            arr = list(profile.get("recent", []))
+            if 1 <= index <= len(arr):
+                arr.pop(index - 1)
+                profile["recent"] = arr
+                changed = True
+        elif f == "taboo":
+            arr = list(profile.get("taboo", []))
+            if 1 <= index <= len(arr):
+                arr.pop(index - 1)
+                profile["taboo"] = arr
+                changed = True
+        elif f == "weakness":
+            arr = list(profile.get("weakness", []))
+            if 1 <= index <= len(arr):
+                arr.pop(index - 1)
+                profile["weakness"] = arr
+                changed = True
+        else:
+            return profile, False, ""
+
+        if changed:
+            profile["first_interaction"] = False
+            store[user_id] = profile
+            await self._save_store(store)
+
+        return profile, changed, self._diff_log(before, profile) if changed else ""
