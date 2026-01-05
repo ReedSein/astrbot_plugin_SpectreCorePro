@@ -4,6 +4,7 @@ from typing import List
 from astrbot.api.all import *
 import time
 import traceback
+from .image_caption import ImageCaptionUtils
 
 class HistoryStorage:
     """
@@ -65,6 +66,16 @@ class HistoryStorage:
             history = HistoryStorage.get_history(platform_name, is_private_chat, chat_id) or []
             
             await HistoryStorage._process_image_persistence(message)
+            # 后台调度图片转述（不阻塞）
+            try:
+                if hasattr(message, "message") and message.message:
+                    for comp in message.message:
+                        if isinstance(comp, Image) and (comp.file or getattr(comp, "url", None)):
+                            img_src = comp.file or comp.url
+                            msg_ts = getattr(message, "timestamp", None)
+                            ImageCaptionUtils.schedule_caption(img_src, platform_name, is_private_chat, chat_id, msg_ts)
+            except Exception:
+                pass
 
             sanitized_message = HistoryStorage._sanitize_message(message)
             history.append(sanitized_message)
