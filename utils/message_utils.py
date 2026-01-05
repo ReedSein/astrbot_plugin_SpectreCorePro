@@ -32,6 +32,14 @@ class MessageUtils:
         formatted_text = ""
         divider = "\n" + "-" + "\n"
         
+        total_images = 0
+        for msg in history_messages:
+            if hasattr(msg, "message") and msg.message:
+                total_images += MessageUtils._count_images_in_message_list(msg.message)
+        if total_images > 0:
+            counter = {"i": total_images + 1, "step": -1}
+        else:
+            counter = {"i": 0, "step": 1}
         for idx, msg in enumerate(history_messages):
             sender_name = "未知用户"
             sender_id = "unknown"
@@ -52,7 +60,7 @@ class MessageUtils:
             
             message_content = await MessageUtils.outline_message_list(
                 msg.message,
-                counter={"i": 0},
+                counter=counter,
                 image_caption=image_caption,
                 platform_name=platform_name,
                 is_private=is_private,
@@ -83,6 +91,7 @@ class MessageUtils:
     ) -> str:
         outline = ""
         idx_ref = counter or {"i": 0}
+        step = idx_ref.get("step", 1)
         uploaded_images = uploaded_images or set()
         for i in message_list:
             try:
@@ -94,6 +103,7 @@ class MessageUtils:
                     outline += await MessageUtils._format_reply_component(
                         i,
                         uploaded_images=uploaded_images,
+                        counter=idx_ref,
                     )
                     continue
                 elif component_type == "plain" or isinstance(i, Plain):
@@ -101,7 +111,7 @@ class MessageUtils:
                 elif component_type == "image" or isinstance(i, Image):
                     try:
                         image = i.file if i.file else i.url
-                        idx_ref["i"] += 1
+                        idx_ref["i"] += step
                         tag = f"[图片{idx_ref['i']}"
                         if image:
                             raw_image = image
@@ -161,6 +171,7 @@ class MessageUtils:
     async def _format_reply_component(
         reply_component: Reply,
         uploaded_images: set[str] | None = None,
+        counter: Dict[str, int] | None = None,
     ) -> str:
         try:
             sender_id = getattr(reply_component, 'sender_id', '')
@@ -172,7 +183,7 @@ class MessageUtils:
             if hasattr(reply_component, 'chain') and reply_component.chain:
                 reply_content = await MessageUtils.outline_message_list(
                     reply_component.chain,
-                    counter={"i": 0},
+                    counter=counter,
                     image_caption=True,
                     platform_name="",
                     is_private=False,
@@ -189,3 +200,22 @@ class MessageUtils:
             if len(reply_content) > 150: reply_content = reply_content[:150] + "..."
             return f"「↪ 引用消息 {sender_info}：{reply_content}」"
         except: return "[回复消息]"
+
+    @staticmethod
+    def _count_images_in_message_list(
+        message_list: List[BaseMessageComponent],
+    ) -> int:
+        total = 0
+        for comp in message_list:
+            try:
+                component_type = getattr(comp, "type", None)
+                if component_type == "image" or isinstance(comp, Image):
+                    total += 1
+                    continue
+                if component_type == "reply" or isinstance(comp, Reply):
+                    chain = getattr(comp, "chain", None)
+                    if chain:
+                        total += MessageUtils._count_images_in_message_list(chain)
+            except Exception:
+                continue
+        return total
