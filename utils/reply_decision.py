@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 import random
 import time
 from .llm_utils import LLMUtils
+from .history_storage import HistoryStorage
 
 class ReplyDecision:
     """
@@ -126,3 +127,7 @@ class ReplyDecision:
             yield await LLMUtils.call_llm(event, config, context)
         finally:
             LLMUtils.set_llm_in_progress(platform_name, is_private, chat_id, False)
+            try:
+                await HistoryStorage.retry_uncaptioned_images(platform_name, is_private, chat_id)
+            except Exception as e:
+                logger.warning(f"重试图片转述调度失败: {e}")
