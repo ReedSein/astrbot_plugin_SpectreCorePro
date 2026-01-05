@@ -14,7 +14,14 @@ class MessageUtils:
     """
         
     @staticmethod
-    async def format_history_for_llm(history_messages: List[AstrBotMessage], max_messages: int = 20, image_caption: bool = True) -> str:
+    async def format_history_for_llm(
+        history_messages: List[AstrBotMessage],
+        max_messages: int = 20,
+        image_caption: bool = True,
+        platform_name: str = "",
+        is_private: bool = False,
+        chat_id: str = "",
+    ) -> str:
         if not history_messages:
             return ""
         
@@ -43,7 +50,12 @@ class MessageUtils:
                 except: pass
             
             message_content = await MessageUtils.outline_message_list(
-                msg.message, counter={"i": 0}, image_caption=image_caption
+                msg.message,
+                counter={"i": 0},
+                image_caption=image_caption,
+                platform_name=platform_name,
+                is_private=is_private,
+                chat_id=chat_id,
             ) if hasattr(msg, "message") and msg.message else ""
             
             message_text = f"发送者: {sender_name} (ID: {sender_id})\n"
@@ -61,7 +73,10 @@ class MessageUtils:
     async def outline_message_list(
         message_list: List[BaseMessageComponent],
         counter: Dict[str, int] | None = None,
-        image_caption: bool = True
+        image_caption: bool = True,
+        platform_name: str = "",
+        is_private: bool = False,
+        chat_id: str = "",
     ) -> str:
         outline = ""
         idx_ref = counter or {"i": 0}
@@ -89,8 +104,17 @@ class MessageUtils:
                                         outline += f"{tag}: 文件过期]"
                                         continue
                                     image = image_path
-                                caption = await ImageCaptionUtils.generate_image_caption(image)
-                                outline += f"{tag}: {caption}]" if caption else f"{tag}]"
+                                # 优先命中缓存，未命中则调度后台转述
+                                caption = ImageCaptionUtils.get_cached_caption(
+                                    image, platform_name, is_private, chat_id
+                                ) or ImageCaptionUtils.caption_cache.get(image)
+                                if caption:
+                                    outline += f"{tag}: {caption}]"
+                                else:
+                                    outline += f"{tag}]"
+                                    ImageCaptionUtils.schedule_caption(
+                                        image, platform_name, is_private, chat_id
+                                    )
                             else:
                                 outline += f"{tag} 已上传]"
                         else:
@@ -123,7 +147,14 @@ class MessageUtils:
             
             reply_content = ""
             if hasattr(reply_component, 'chain') and reply_component.chain:
-                reply_content = await MessageUtils.outline_message_list(reply_component.chain, counter={"i": 0}, image_caption=True)
+                reply_content = await MessageUtils.outline_message_list(
+                    reply_component.chain,
+                    counter={"i": 0},
+                    image_caption=True,
+                    platform_name="",
+                    is_private=False,
+                    chat_id="",
+                )
             elif hasattr(reply_component, 'message_str') and reply_component.message_str:
                 reply_content = reply_component.message_str
             elif hasattr(reply_component, 'text') and reply_component.text:
