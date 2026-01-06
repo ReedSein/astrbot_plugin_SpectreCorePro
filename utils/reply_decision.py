@@ -1,5 +1,5 @@
 from astrbot.api.all import *
-from astrbot.api.message_components import At
+from astrbot.api.message_components import At, Poke
 from typing import Dict, Any, Optional
 import random
 import time
@@ -56,6 +56,11 @@ class ReplyDecision:
             # 8. 概率回复 (读空气)
             if is_private:
                 return True
+
+            # 戳一戳事件不参与概率回复
+            if ReplyDecision._is_poke_event(event):
+                logger.info("[SpectreCore] 过滤：戳一戳事件不参与概率回复")
+                return False
                 
             method = freq_config.get("method", "概率回复")
             if method == "概率回复":
@@ -113,6 +118,24 @@ class ReplyDecision:
         for kw in keywords:
             if kw in msg_text:
                 return True
+        return False
+
+    @staticmethod
+    def _is_poke_event(event: AstrMessageEvent) -> bool:
+        try:
+            if hasattr(event.message_obj, "message"):
+                for comp in event.message_obj.message:
+                    if isinstance(comp, Poke):
+                        return True
+            raw_message = getattr(event.message_obj, "raw_message", None)
+            if raw_message and hasattr(raw_message, "get"):
+                return (
+                    raw_message.get("post_type") == "notice"
+                    and raw_message.get("notice_type") == "notify"
+                    and raw_message.get("sub_type") == "poke"
+                )
+        except Exception:
+            return False
         return False
         
     @staticmethod
