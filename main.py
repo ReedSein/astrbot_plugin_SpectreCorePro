@@ -384,9 +384,81 @@ class SpectreCore(Star):
     @filter.on_llm_request(priority=90)
     async def on_llm_request_custom(self, event: AstrMessageEvent, req: ProviderRequest):
         try:
-            if getattr(event, "_is_forward_analysis", False): return
+            if getattr(event, "_is_forward_analysis", False):
+                return
 
-            history_str = getattr(event, "_spectre_history", "")
+            spectre_request = False
+            try:
+                spectre_request = bool(event.get_extra("spectre_request", False))
+            except Exception:
+                spectre_request = False
+
+            if not spectre_request and not hasattr(event, "_spectre_history"):
+                return
+
+            history_str = ""
+            try:
+                history_str = event.get_extra("spectre_history", "") or ""
+            except Exception:
+                history_str = ""
+            if not history_str:
+                history_str = getattr(event, "_spectre_history", "")
+            if not history_str and spectre_request:
+                try:
+                    platform_name = event.get_platform_name()
+                    is_private = event.is_private_chat()
+                    chat_id = event.get_group_id() if not is_private else event.get_sender_id()
+                    all_msgs = HistoryStorage.get_history(platform_name, is_private, chat_id)
+                    msg_limit = self.config.get("group_msg_history", 10)
+                    bot_history_keep = self.config.get("bot_reply_history_count", 3)
+                    image_processing_cfg = self.config.get("image_processing", {})
+                    use_image_caption = bool(image_processing_cfg.get("use_image_caption", False))
+
+                    history_str = "（暂无历史记录）"
+                    if all_msgs:
+                        tail_msgs = all_msgs[-msg_limit:] if len(all_msgs) > msg_limit else all_msgs
+
+                        recent_bot_msgs = []
+                        if bot_history_keep > 0:
+                            bot_msgs = []
+                            bot_self_id = str(event.get_self_id())
+                            for msg in all_msgs:
+                                sender_id = None
+                                if hasattr(msg, "sender") and msg.sender:
+                                    sender_id = str(msg.sender.user_id)
+                                if sender_id == bot_self_id:
+                                    bot_msgs.append(msg)
+                            if bot_msgs:
+                                recent_bot_msgs = bot_msgs[-bot_history_keep:]
+
+                        seen_timestamps = set()
+                        merged_list = []
+                        for msg in tail_msgs:
+                            merged_list.append(msg)
+                            if hasattr(msg, "timestamp"):
+                                seen_timestamps.add(msg.timestamp)
+
+                        for bot_msg in recent_bot_msgs:
+                            ts = getattr(bot_msg, "timestamp", 0)
+                            if ts not in seen_timestamps:
+                                merged_list.append(bot_msg)
+                                seen_timestamps.add(ts)
+
+                        merged_list.sort(key=lambda x: getattr(x, "timestamp", 0))
+
+                        fmt = await MessageUtils.format_history_for_llm(
+                            merged_list,
+                            max_messages=999,
+                            image_caption=use_image_caption,
+                            platform_name=platform_name,
+                            is_private=is_private,
+                            chat_id=str(chat_id),
+                            uploaded_images=None,
+                        )
+                        if fmt:
+                            history_str = "以下是最近的聊天记录：\n" + fmt
+                except Exception as e:
+                    logger.warning(f"[SpectreCore] 历史兜底构建失败: {e}")
             current_msg = req.prompt or "[图片/非文本消息]"
             mem_data = ""
             sender_name = event.get_sender_name() or "用户"
@@ -485,7 +557,8 @@ class SpectreCore(Star):
                 # [Visual Log] 展示完整的降级 Prompt (无省略)
                 logger.info(f"🛡️ 降级 Prompt 完整内容:\n{'-'*20}\n{fallback_prompt}\n{'-'*20}")
             
-            if hasattr(event, "_spectre_history"): delattr(event, "_spectre_history")
+            if hasattr(event, "_spectre_history"):
+                delattr(event, "_spectre_history")
 
         except Exception as e:
             logger.error(f"[SpectreCore Pro] Prompt 组装失败: {e}")
