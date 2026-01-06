@@ -57,10 +57,12 @@ class ReplyDecision:
             if is_private:
                 return True
 
-            # 戳一戳事件不参与概率回复
+            # 戳一戳事件仅在目标为机器人时参与概率回复
             if ReplyDecision._is_poke_event(event):
-                logger.info("[SpectreCore] 过滤：戳一戳事件不参与概率回复")
-                return False
+                if not ReplyDecision._is_poke_to_bot(event):
+                    logger.info("[SpectreCore] 过滤：戳一戳未指向机器人")
+                    return False
+                logger.info("[SpectreCore] 允许：戳一戳指向机器人，进入概率判定")
                 
             method = freq_config.get("method", "概率回复")
             if method == "概率回复":
@@ -134,6 +136,28 @@ class ReplyDecision:
                     and raw_message.get("notice_type") == "notify"
                     and raw_message.get("sub_type") == "poke"
                 )
+        except Exception:
+            return False
+        return False
+
+    @staticmethod
+    def _is_poke_to_bot(event: AstrMessageEvent) -> bool:
+        try:
+            bot_self_id = str(event.get_self_id() or "")
+            if not bot_self_id:
+                return False
+
+            raw_message = getattr(event.message_obj, "raw_message", None)
+            if raw_message and hasattr(raw_message, "get"):
+                target_id = raw_message.get("target_id")
+                if target_id is not None:
+                    return str(target_id) == bot_self_id
+
+            if hasattr(event.message_obj, "message"):
+                for comp in event.message_obj.message:
+                    if isinstance(comp, Poke):
+                        if str(comp.qq) == bot_self_id:
+                            return True
         except Exception:
             return False
         return False
