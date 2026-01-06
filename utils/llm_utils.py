@@ -409,6 +409,11 @@ class LLMUtils:
             history_str = "（暂无历史记录）"
 
         setattr(event, "_spectre_history", history_str)
+        try:
+            event.set_extra("spectre_history", history_str)
+            event.set_extra("spectre_request", True)
+        except Exception:
+            pass
 
         current_msg = event.get_message_outline() or "[非文本消息]"
 
