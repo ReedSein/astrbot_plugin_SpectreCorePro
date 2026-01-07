@@ -14,6 +14,14 @@ class MessageUtils:
     """
         
     @staticmethod
+    def _get_image_src(component: Image) -> str | None:
+        for attr in ("file", "url", "path"):
+            value = getattr(component, attr, None)
+            if value:
+                return value
+        return None
+
+    @staticmethod
     async def format_history_for_llm(
         history_messages: List[AstrBotMessage],
         max_messages: int = 20,
@@ -110,7 +118,7 @@ class MessageUtils:
                     outline += i.text
                 elif component_type == "image" or isinstance(i, Image):
                     try:
-                        image = i.file if i.file else i.url
+                        image = MessageUtils._get_image_src(i)
                         idx_ref["i"] += step
                         tag = f"[图片{idx_ref['i']}"
                         if image:
