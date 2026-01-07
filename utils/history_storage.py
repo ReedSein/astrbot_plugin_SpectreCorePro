@@ -47,6 +47,14 @@ class HistoryStorage:
             if hasattr(sanitized_message, attr):
                 setattr(sanitized_message, attr, None)
         return sanitized_message
+
+    @staticmethod
+    def _get_image_src(component: Image) -> str | None:
+        for attr in ("file", "url", "path"):
+            value = getattr(component, attr, None)
+            if value:
+                return value
+        return None
     
     @staticmethod
     async def save_message(message: AstrBotMessage) -> bool:
@@ -70,8 +78,10 @@ class HistoryStorage:
             try:
                 if hasattr(message, "message") and message.message:
                     for comp in message.message:
-                        if isinstance(comp, Image) and (comp.file or getattr(comp, "url", None)):
-                            img_src = comp.file or comp.url
+                        if isinstance(comp, Image):
+                            img_src = HistoryStorage._get_image_src(comp)
+                            if not img_src:
+                                continue
                             msg_ts = getattr(message, "timestamp", None)
                             ImageCaptionUtils.schedule_caption(img_src, platform_name, is_private_chat, chat_id, msg_ts)
             except Exception:
@@ -127,15 +137,19 @@ class HistoryStorage:
                     if not hasattr(msg, "message") or not msg.message:
                         continue
                     for comp in msg.message:
-                        if isinstance(comp, Image) and (comp.file or getattr(comp, "url", None)):
-                            img_src = comp.file or comp.url
+                        if isinstance(comp, Image):
+                            img_src = HistoryStorage._get_image_src(comp)
+                            if not img_src:
+                                continue
                             ImageCaptionUtils.schedule_caption(
                                 img_src, platform_name, is_private_chat, chat_id, msg_ts
                             )
                         elif isinstance(comp, Reply) and getattr(comp, "chain", None):
                             for r in comp.chain:
-                                if isinstance(r, Image) and (r.file or getattr(r, "url", None)):
-                                    img_src = r.file or r.url
+                                if isinstance(r, Image):
+                                    img_src = HistoryStorage._get_image_src(r)
+                                    if not img_src:
+                                        continue
                                     ImageCaptionUtils.schedule_caption(
                                         img_src, platform_name, is_private_chat, chat_id, msg_ts
                                     )
@@ -234,13 +248,22 @@ class HistoryStorage:
                 if isinstance(component, Image):
                     if component.file and component.file.startswith("file:///") and "/images/" in component.file: continue
                     try:
-                        temp_file_path = await component.convert_to_file_path()
+                        temp_file_path = None
+                        file_ref = getattr(component, "file", "")
+                        if isinstance(file_ref, str):
+                            if file_ref.startswith("file:///"):
+                                temp_file_path = file_ref[8:]
+                            elif os.path.exists(file_ref):
+                                temp_file_path = file_ref
+                        if not temp_file_path:
+                            temp_file_path = await component.convert_to_file_path()
                         if temp_file_path and os.path.exists(temp_file_path):
                             import uuid, shutil
                             ext = ".jpg"
                             if "." in temp_file_path:
                                 original_ext = os.path.splitext(temp_file_path)[1].lower()
-                                if original_ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp']: ext = original_ext
+                                if original_ext in ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']:
+                                    ext = original_ext
                             
                             fname = f"{uuid.uuid4().hex}{ext}"
                             dest = os.path.join(images_dir, fname)
