@@ -314,7 +314,8 @@ class SpectreCore(Star):
         return has_at_me and not has_content
 
     def _is_explicit_trigger(self, event: AstrMessageEvent) -> bool:
-        if event.message_obj.type == EventMessageType.PRIVATE_MESSAGE: return True
+        if event.is_private_chat():
+            return True
         bot_self_id = event.get_self_id()
         if not bot_self_id: return False
         for comp in event.message_obj.message:
@@ -413,6 +414,8 @@ class SpectreCore(Star):
                     bot_history_keep = self.config.get("bot_reply_history_count", 3)
                     image_processing_cfg = self.config.get("image_processing", {})
                     use_image_caption = bool(image_processing_cfg.get("use_image_caption", False))
+                    current_msg_id = getattr(event.message_obj, "message_id", None)
+                    current_msg_id = str(current_msg_id) if current_msg_id is not None else None
 
                     history_str = "（暂无历史记录）"
                     if all_msgs:
@@ -445,6 +448,12 @@ class SpectreCore(Star):
                                 seen_timestamps.add(ts)
 
                         merged_list.sort(key=lambda x: getattr(x, "timestamp", 0))
+                        if current_msg_id:
+                            merged_list = [
+                                msg
+                                for msg in merged_list
+                                if str(getattr(msg, "message_id", "")) != current_msg_id
+                            ]
 
                         fmt = await MessageUtils.format_history_for_llm(
                             merged_list,
@@ -541,7 +550,7 @@ class SpectreCore(Star):
                 if mem_data:
                     logger.info("[SpectreCore] 记忆注入内容:\n%s", mem_data)
                 logger.info("[SpectreCore] 最终发送给 LLM 的 Prompt:\n%s", final_prompt)
-                
+
                 req.prompt = final_prompt
 
             except Exception as e:
