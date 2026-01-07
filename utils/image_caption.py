@@ -73,11 +73,11 @@ class ImageCaptionUtils:
     @staticmethod
     async def _wait_and_caption(image: str, platform_name: str, is_private: bool, chat_id: str):
         try:
-            from .llm_utils import LLMUtils  # 延迟导入，避免循环依赖
+            from .llm_utils import LLMUtils  # 延迟导入避免循环
         except Exception:
             LLMUtils = None
 
-        # 如果 LLM 正在处理，等待空闲（最长 60s）
+        # 若 LLM 正在处理该会话，等待空闲或超时
         for _ in range(60):
             try:
                 if not LLMUtils or not LLMUtils.is_llm_in_progress(platform_name, is_private, chat_id):
@@ -103,48 +103,6 @@ class ImageCaptionUtils:
                     is_private=is_private,
                     chat_id=chat_id,
                 )
-        finally:
-            ImageCaptionUtils._pending.discard(ImageCaptionUtils._hash_image(image))
-
-    @staticmethod
-    def schedule_caption(image: str, platform_name: str, is_private: bool, chat_id: str):
-        """后台调度图片转述；命中缓存或正在排队则直接返回。"""
-        cfg = ImageCaptionUtils.config.get("image_processing", {}) if ImageCaptionUtils.config else {}
-        if not cfg.get("use_image_caption", False):
-            return
-        hashed = ImageCaptionUtils._hash_image(image)
-        if hashed in ImageCaptionUtils._pending:
-            return
-        if ImageCaptionUtils.get_cached_caption(image, platform_name, is_private, chat_id):
-            return
-        ImageCaptionUtils._pending.add(hashed)
-        asyncio.create_task(
-            ImageCaptionUtils._wait_and_caption(image, platform_name, is_private, chat_id)
-        )
-
-    @staticmethod
-    async def _wait_and_caption(image: str, platform_name: str, is_private: bool, chat_id: str):
-        try:
-            from .llm_utils import LLMUtils  # 延迟导入避免循环
-        except Exception:
-            LLMUtils = None
-
-        # 若 LLM 正在处理该会话，等待空闲或超时
-        for _ in range(60):
-            try:
-                if not LLMUtils or not LLMUtils.is_llm_in_progress(platform_name, is_private, chat_id):
-                    break
-            except Exception:
-                break
-            await asyncio.sleep(1)
-
-        try:
-            await ImageCaptionUtils.generate_image_caption(
-                image,
-                platform_name=platform_name,
-                is_private=is_private,
-                chat_id=chat_id,
-            )
         finally:
             ImageCaptionUtils._pending.discard(ImageCaptionUtils._hash_image(image))
 
@@ -285,15 +243,19 @@ class ImageCaptionUtils:
             
             # 缓存结果
             if caption:
-                 ImageCaptionUtils.caption_cache[image] = caption
-                 logger.debug(f"缓存图片描述: {image[:50]}... -> {caption}")
-                 try:
-                     if image_processing_config.get("caption_cache_persist", True):
-                         ImageCaptionUtils.set_cached_caption(
-                             image, caption, platform_name, is_private, chat_id
-                         )
-                 except Exception as e:
-                     logger.warning(f"写入持久化转述缓存失败: {e}")
+                short_caption = caption.replace("\n", " ").strip()
+                if len(short_caption) > 80:
+                    short_caption = short_caption[:80] + "..."
+                logger.info(f"[SpectreCore] 图片转述完成: {short_caption}")
+                ImageCaptionUtils.caption_cache[image] = caption
+                logger.debug(f"缓存图片描述: {image[:50]}... -> {caption}")
+                try:
+                    if image_processing_config.get("caption_cache_persist", True):
+                        ImageCaptionUtils.set_cached_caption(
+                            image, caption, platform_name, is_private, chat_id
+                        )
+                except Exception as e:
+                    logger.warning(f"写入持久化转述缓存失败: {e}")
                  
             return caption
         except asyncio.TimeoutError:
