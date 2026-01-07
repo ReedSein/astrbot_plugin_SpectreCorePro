@@ -260,32 +260,27 @@ class LLMUtils:
         chat_id = event.get_group_id() if not is_private else event.get_sender_id()
         user_id = event.get_sender_id()
         bot_self_id = str(event.get_self_id())
+        umo = event.unified_msg_origin
 
-        # 特例：引用图片且 @Bot 时，若图片未上传且无转述，则先同步转述
+        # 特例：引用图片时，若无转述缓存则先同步转述，再拼装提示词
         try:
-            if not is_private and hasattr(event.message_obj, "message"):
-                bot_id = bot_self_id
-                at_me = any(
-                    isinstance(c, At) and (str(c.qq) == bot_id or c.qq == "all")
-                    for c in event.message_obj.message
-                )
-                if at_me:
-                    for comp in event.message_obj.message:
-                        if isinstance(comp, Reply) and getattr(comp, "chain", None):
-                            for r_comp in comp.chain:
-                                if isinstance(r_comp, Image):
-                                    img_src = LLMUtils._get_image_src(r_comp)
-                                    if not img_src:
-                                        continue
-                                    if not ImageCaptionUtils.get_cached_caption(
-                                        img_src, platform_name, is_private, chat_id
-                                    ):
-                                        await ImageCaptionUtils.generate_image_caption(
-                                            img_src,
-                                            platform_name=platform_name,
-                                            is_private=is_private,
-                                            chat_id=chat_id,
-                                        )
+            if hasattr(event.message_obj, "message"):
+                for comp in event.message_obj.message:
+                    if isinstance(comp, Reply) and getattr(comp, "chain", None):
+                        for r_comp in comp.chain:
+                            if isinstance(r_comp, Image):
+                                img_src = LLMUtils._get_image_src(r_comp)
+                                if not img_src:
+                                    continue
+                                if not ImageCaptionUtils.get_cached_caption(
+                                    img_src, platform_name, is_private, chat_id
+                                ):
+                                    await ImageCaptionUtils.generate_image_caption(
+                                        img_src,
+                                        platform_name=platform_name,
+                                        is_private=is_private,
+                                        chat_id=chat_id,
+                                    )
         except Exception as e:
             logger.warning(f"引用图片转述预处理失败: {e}")
         
@@ -317,17 +312,27 @@ class LLMUtils:
 
         system_parts.append(env_info)
 
-        persona_name = config.get("persona", "")
         contexts = []
-        if persona_name:
-            try:
-                p = PersonaUtils.get_persona_by_name(context, persona_name)
-                if p:
-                    system_parts.append(p.get('prompt', ''))
-                    if p.get('_begin_dialogs_processed'):
-                        contexts.extend(p.get('_begin_dialogs_processed', []))
-            except Exception as e:
-                logger.error(f"加载人设失败: {e}")
+        try:
+            persona = await PersonaUtils.resolve_persona_v3(
+                context,
+                umo,
+            )
+            if persona:
+                persona_prompt = persona.get("prompt", "")
+                mood_dialogs = persona.get("_mood_imitation_dialogs_processed", "")
+                if mood_dialogs:
+                    persona_prompt += (
+                        "\n请模仿以下示例的对话风格来反应(示例中，a代表用户，b代表你)\n"
+                        + str(mood_dialogs)
+                    )
+                if persona_prompt:
+                    system_parts.append(persona_prompt)
+                begin_dialogs = persona.get("_begin_dialogs_processed", [])
+                if begin_dialogs:
+                    contexts.extend(begin_dialogs)
+        except Exception as e:
+            logger.error(f"加载人设失败: {e}")
 
         instruction = "\n\n【规则】\n1. 你的名字在聊天记录中显示为 'Rosa'。\n2. 请勿重复自己的名字作为回复开头。"
         if config.get("read_air", False):
@@ -439,7 +444,21 @@ class LLMUtils:
         except Exception:
             pass
 
-        current_msg = event.get_message_outline() or "[非文本消息]"
+        current_msg = ""
+        if hasattr(event, "message_obj") and hasattr(event.message_obj, "message"):
+            try:
+                current_msg = await MessageUtils.outline_message_list(
+                    event.message_obj.message,
+                    image_caption=use_image_caption,
+                    platform_name=platform_name,
+                    is_private=is_private,
+                    chat_id=str(chat_id),
+                    uploaded_images=uploaded_images,
+                )
+            except Exception as e:
+                logger.warning(f"当前消息提取失败: {e}")
+        if not current_msg:
+            current_msg = event.get_message_outline() or "[非文本消息]"
 
         if image_urls:
             notes = ", ".join(image_notes)
