@@ -27,9 +27,11 @@
 建议在 WebUI 配置，或修改 `config.json`:
 
 *   **基础**:
-    *   `persona`: 绑定的人设 ID。
     *   `enabled_groups`: 启用的群组白名单。
+    *   `enable_all_groups`: 全局启用群聊回复（黑名单除外）。
+    *   `blocked_groups`: 群聊黑名单（最高优先级）。
     *   `read_air`: 静默模式开关 (允许 Bot 决定是否不回复)。
+    *   人格由 AstrBot UMO 会话设置管理（插件不再单独配置人格）。
 *   **交互**:
     *   `model_frequency`: 配置主动插话的概率及触发/屏蔽关键词。
     *   `cot_prefill`: 启用 CoT 预填充 (如 `<ROSAOS>`)，提升逻辑稳定性。
