@@ -1,10 +1,4 @@
 {
-    "persona": {
-        "description": "关联人设ID",
-        "type": "string",
-        "hint": "填写在「人格设置」中创建的人设名称 (Name)。留空则使用全局默认人设。",
-        "_special": "select_persona"
-    },
     "enabled_groups": {
         "description": "启用的群组白名单",
         "type": "list",
@@ -12,6 +6,21 @@
             "type": "string"
         },
         "hint": "只有在列表中的群组才会触发回复。输入群号。"
+    },
+    "enable_all_groups": {
+        "description": "回复所有群聊",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后将回复所有群聊（黑名单中的群除外）。关闭则只回复白名单中的群。"
+    },
+    "blocked_groups": {
+        "description": "黑名单群组列表",
+        "type": "list",
+        "items": {
+            "type": "string"
+        },
+        "default": [],
+        "hint": "列表中的群聊将不会回复，优先级高于白名单和全局开关。"
     },
     "enabled_private": {
         "description": "启用私聊回复",
