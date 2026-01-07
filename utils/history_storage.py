@@ -122,9 +122,16 @@ class HistoryStorage:
                 if not HistoryStorage.config.get("enabled_private", False):
                     return
             else:
-                enabled_groups = [str(g) for g in HistoryStorage.config.get("enabled_groups", [])]
-                if str(chat_id) not in enabled_groups:
+                if not chat_id:
                     return
+                group_id = str(chat_id)
+                blocked_groups = {str(g) for g in HistoryStorage.config.get("blocked_groups", [])}
+                enabled_groups = {str(g) for g in HistoryStorage.config.get("enabled_groups", [])}
+                if group_id in blocked_groups:
+                    return
+                if not HistoryStorage.config.get("enable_all_groups", False):
+                    if group_id not in enabled_groups:
+                        return
             history = HistoryStorage.get_history(platform_name, is_private_chat, chat_id) or []
             if not history:
                 return
@@ -165,13 +172,22 @@ class HistoryStorage:
         if is_private:
             return HistoryStorage.config.get("enabled_private", False)
         else:
-            group_id = event.get_group_id()
-            # 确保类型一致
-            enabled_groups = [str(g) for g in HistoryStorage.config.get("enabled_groups", [])]
-            return str(group_id) in enabled_groups
+            group_id_raw = event.get_group_id()
+            if not group_id_raw:
+                return False
+            group_id = str(group_id_raw)
+            blocked_groups = {str(g) for g in HistoryStorage.config.get("blocked_groups", [])}
+            enabled_groups = {str(g) for g in HistoryStorage.config.get("enabled_groups", [])}
+            if group_id in blocked_groups:
+                return False
+            if HistoryStorage.config.get("enable_all_groups", False):
+                return True
+            return group_id in enabled_groups
     
     @staticmethod
     async def process_and_save_user_message(event: AstrMessageEvent) -> None:
+        if event.get_extra("incantation_command", False):
+            return
         if not HistoryStorage.is_chat_enabled(event): return
         message_obj = event.message_obj
         message_obj.platform_name = event.get_platform_name()
