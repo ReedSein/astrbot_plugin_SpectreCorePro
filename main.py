@@ -231,10 +231,21 @@ class SpectreCore(Star):
             event._is_forward_analysis = True
             
             persona_system_prompt = ""
-            persona_name = self.config.get("persona", "")
-            if persona_name:
-                p = PersonaUtils.get_persona_by_name(self.context, persona_name)
-                if p: persona_system_prompt = p.get('prompt', '')
+            try:
+                persona = await PersonaUtils.resolve_persona_v3(
+                    self.context,
+                    event.unified_msg_origin,
+                )
+                if persona:
+                    persona_system_prompt = persona.get("prompt", "")
+                    mood_dialogs = persona.get("_mood_imitation_dialogs_processed", "")
+                    if mood_dialogs:
+                        persona_system_prompt += (
+                            "\n请模仿以下示例的对话风格来反应(示例中，a代表用户，b代表你)\n"
+                            + str(mood_dialogs)
+                        )
+            except Exception as e:
+                logger.error(f"加载人设失败: {e}")
 
             yield event.request_llm(
                 prompt=base_prompt,
