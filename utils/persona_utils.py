@@ -1,6 +1,7 @@
 from astrbot.api.all import *
+from astrbot.api import sp
 from astrbot.api.provider import Personality
-from typing import Dict, List, Optional, Any
+from typing import List, Optional
 
 class PersonaUtils:
     """
@@ -20,7 +21,9 @@ class PersonaUtils:
             所有已加载的人格列表
         """
         try:
-            return context.provider_manager.personas
+            if hasattr(context, "persona_manager"):
+                return list(getattr(context.persona_manager, "personas_v3", []))
+            return list(getattr(context.provider_manager, "personas", []))
         except Exception as e:
             logger.error(f"获取所有人格失败: {e}")
             return []
@@ -56,11 +59,52 @@ class PersonaUtils:
             指定名称的人格对象，如果不存在则返回None
         """
         try:
-            personas = context.provider_manager.personas
+            personas = getattr(context.persona_manager, "personas_v3", None)
+            if personas is None:
+                personas = getattr(context.provider_manager, "personas", [])
             for persona in personas:
-                if persona['name'] == persona_name:
+                if persona.get("name") == persona_name:
                     return persona
             return None
         except Exception as e:
             logger.error(f"获取指定人格失败: {e}")
             return None
+
+    @staticmethod
+    async def resolve_persona_v3(
+        context: Context,
+        umo: str,
+    ) -> Optional[Personality]:
+        persona = None
+        persona_id = ""
+
+        try:
+            session_cfg = await sp.get_async(
+                scope="umo",
+                scope_id=umo,
+                key="session_service_config",
+                default={},
+            )
+            persona_id = session_cfg.get("persona_id") or ""
+        except Exception as e:
+            logger.debug(f"获取 session_service_config 失败: {e}")
+
+        if persona_id == "[%None]":
+            return None
+
+        if not persona_id:
+            try:
+                if hasattr(context, "persona_manager") and hasattr(
+                    context.persona_manager, "get_default_persona_v3"
+                ):
+                    persona = await context.persona_manager.get_default_persona_v3(
+                        umo=umo
+                    )
+                    persona_id = persona.get("name") if persona else ""
+            except Exception as e:
+                logger.debug(f"获取默认人格失败: {e}")
+
+        if persona_id and not persona:
+            persona = PersonaUtils.get_persona_by_name(context, persona_id)
+
+        return persona
