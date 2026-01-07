@@ -29,6 +29,14 @@ class LLMUtils:
     _time_offset: float = 0.0  # 网络时间 - 系统时间 的偏移量 (秒)
     _is_time_synced: bool = False
     _sync_lock = asyncio.Lock()
+
+    @staticmethod
+    def _get_image_src(component: Image) -> str | None:
+        for attr in ("file", "url", "path"):
+            value = getattr(component, attr, None)
+            if value:
+                return value
+        return None
     
     @staticmethod
     def get_chat_key(platform_name: str, is_private_chat: bool, chat_id: str) -> str:
@@ -264,15 +272,19 @@ class LLMUtils:
                 if at_me:
                     for comp in event.message_obj.message:
                         if isinstance(comp, Reply) and getattr(comp, "chain", None):
-                                    for r_comp in comp.chain:
-                                        if isinstance(r_comp, Image) and (r_comp.file or getattr(r_comp, "url", None)):
-                                            img_src = r_comp.file or r_comp.url
-                                            if not ImageCaptionUtils.get_cached_caption(img_src, platform_name, is_private, chat_id):
-                                                await ImageCaptionUtils.generate_image_caption(
-                                                    img_src,
-                                                    platform_name=platform_name,
-                                                    is_private=is_private,
-                                                    chat_id=chat_id,
+                            for r_comp in comp.chain:
+                                if isinstance(r_comp, Image):
+                                    img_src = LLMUtils._get_image_src(r_comp)
+                                    if not img_src:
+                                        continue
+                                    if not ImageCaptionUtils.get_cached_caption(
+                                        img_src, platform_name, is_private, chat_id
+                                    ):
+                                        await ImageCaptionUtils.generate_image_caption(
+                                            img_src,
+                                            platform_name=platform_name,
+                                            is_private=is_private,
+                                            chat_id=chat_id,
                                         )
         except Exception as e:
             logger.warning(f"引用图片转述预处理失败: {e}")
@@ -337,8 +349,10 @@ class LLMUtils:
             for msg in reversed(msgs_to_check):
                 if hasattr(msg, "message") and msg.message:
                     for comp in msg.message:
-                        if isinstance(comp, Image) and (comp.file or getattr(comp, "url", None)):
-                            img_src = comp.file or comp.url
+                        if isinstance(comp, Image):
+                            img_src = LLMUtils._get_image_src(comp)
+                            if not img_src:
+                                continue
                             image_urls.append(img_src)
                             note_idx = len(image_urls)
                             basename = img_src
@@ -363,6 +377,8 @@ class LLMUtils:
         history_str = ""
         msg_limit = config.get("group_msg_history", 10)
         bot_history_keep = config.get("bot_reply_history_count", 3)
+        current_msg_id = getattr(event.message_obj, "message_id", None)
+        current_msg_id = str(current_msg_id) if current_msg_id is not None else None
         
         if all_msgs:
             tail_msgs = all_msgs[-msg_limit:] if len(all_msgs) > msg_limit else all_msgs
@@ -393,6 +409,12 @@ class LLMUtils:
                     seen_timestamps.add(ts)
             
             merged_list.sort(key=lambda x: getattr(x, 'timestamp', 0))
+            if current_msg_id:
+                merged_list = [
+                    msg
+                    for msg in merged_list
+                    if str(getattr(msg, "message_id", "")) != current_msg_id
+                ]
             
             fmt = await MessageUtils.format_history_for_llm(
                 merged_list,
@@ -405,6 +427,8 @@ class LLMUtils:
             )
             if fmt:
                 history_str = "以下是最近的聊天记录：\n" + fmt
+            else:
+                history_str = "（暂无历史记录）"
         else:
             history_str = "（暂无历史记录）"
 
