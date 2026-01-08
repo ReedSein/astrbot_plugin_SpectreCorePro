@@ -232,10 +232,15 @@ class SpectreCore(Star):
             
             persona_system_prompt = ""
             try:
-                persona = await PersonaUtils.resolve_persona_v3(
-                    self.context,
-                    event.unified_msg_origin,
-                )
+                if hasattr(PersonaUtils, "resolve_persona_v3"):
+                    persona = await PersonaUtils.resolve_persona_v3(
+                        self.context,
+                        event.unified_msg_origin,
+                    )
+                else:
+                    persona = await self.context.persona_manager.get_default_persona_v3(
+                        umo=event.unified_msg_origin
+                    )
                 if persona:
                     persona_system_prompt = persona.get("prompt", "")
                     mood_dialogs = persona.get("_mood_imitation_dialogs_processed", "")
@@ -331,8 +336,12 @@ class SpectreCore(Star):
         if not bot_self_id: return False
         for comp in event.message_obj.message:
             if isinstance(comp, At) and (str(comp.qq) == str(bot_self_id) or comp.qq == "all"): return True
-            # [Fix] 移除 Reply 判定。引用消息本身不应视为显式触发 (除非配合 @)。
-            # elif isinstance(comp, Reply): return True 
+            if isinstance(comp, Reply):
+                sender_id = getattr(comp, "sender_id", None)
+                if sender_id in (None, 0, "0"):
+                    sender_id = getattr(comp, "qq", None)
+                if sender_id is not None and str(sender_id) == str(bot_self_id):
+                    return True
         msg_text = event.get_message_outline() or ""
         if f"@{bot_self_id}" in msg_text: return True
         return False
