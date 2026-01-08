@@ -202,6 +202,32 @@ class ImageCaptionUtils:
         Returns:
             生成的图片描述文本，如果失败则返回None
         """
+        if isinstance(image, str):
+            if image.startswith("file:///"):
+                file_path = image[8:]
+                if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
+                    logger.warning(f"图片转述跳过：本地文件无效 {file_path}")
+                    return None
+            elif os.path.exists(image):
+                if os.path.getsize(image) <= 0:
+                    logger.warning(f"图片转述跳过：本地文件为空 {image}")
+                    return None
+
+        effective_image = image
+        if isinstance(image, str) and image.startswith("http"):
+            try:
+                from astrbot.core.utils.io import download_image_by_url
+                effective_image = await download_image_by_url(image)
+                if (
+                    not effective_image
+                    or not os.path.exists(effective_image)
+                    or os.path.getsize(effective_image) <= 0
+                ):
+                    logger.warning(f"图片转述跳过：下载为空 {image}")
+                    return None
+            except Exception as e:
+                logger.warning(f"图片转述跳过：下载失败 {image} ({e})")
+                return None
         # 检查缓存
         if image in ImageCaptionUtils.caption_cache:
             logger.debug(f"命中图片描述缓存: {image[:50]}...")
@@ -245,7 +271,7 @@ class ImageCaptionUtils:
                 return await provider.text_chat(
                     prompt=image_processing_config.get("image_caption_prompt", "请直接简短描述这张图片"),
                     contexts=[], 
-                    image_urls=[image], # 图片链接，支持路径和网络链接
+                    image_urls=[effective_image], # 图片链接，支持路径和网络链接
                     func_tool=None, # 当前用户启用的函数调用工具。如果不需要，可以不传
                     system_prompt=""  # 系统提示，可以不传
                 )
