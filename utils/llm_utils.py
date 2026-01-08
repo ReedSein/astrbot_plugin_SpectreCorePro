@@ -46,6 +46,42 @@ class LLMUtils:
                         continue
             return value
         return None
+
+    @staticmethod
+    async def _prepare_upload_image(image: str) -> tuple[str | None, set[str]]:
+        aliases: set[str] = set()
+        if not image or not isinstance(image, str):
+            return None, aliases
+        if image.startswith("http"):
+            try:
+                from astrbot.core.utils.io import download_image_by_url
+                local_path = await download_image_by_url(image)
+            except Exception as e:
+                logger.warning(f"图片下载失败，已跳过: {image} ({e})")
+                return None, aliases
+            if (
+                not local_path
+                or not os.path.exists(local_path)
+                or os.path.getsize(local_path) <= 0
+            ):
+                logger.warning(f"图片下载为空，已跳过: {image}")
+                return None, aliases
+            aliases.add(image)
+            aliases.add(local_path)
+            return local_path, aliases
+        if image.startswith("file:///"):
+            file_path = image[8:]
+            if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
+                return None, aliases
+            aliases.add(image)
+            aliases.add(file_path)
+            return image, aliases
+        if os.path.exists(image):
+            if os.path.getsize(image) <= 0:
+                return None, aliases
+            aliases.add(image)
+            return image, aliases
+        return image, aliases
     
     @staticmethod
     def get_chat_key(platform_name: str, is_private_chat: bool, chat_id: str) -> str:
@@ -360,6 +396,7 @@ class LLMUtils:
         use_image_caption = bool(image_processing_cfg.get("use_image_caption", False))
         image_urls = []
         image_notes = []
+        upload_aliases: set[str] = set()
         img_check_count = image_processing_cfg.get("image_count", 0)
         
         if img_check_count > 0 and all_msgs:
@@ -372,7 +409,14 @@ class LLMUtils:
                             img_src = LLMUtils._get_image_src(comp)
                             if not img_src:
                                 continue
-                            image_urls.append(img_src)
+                            upload_src, aliases = await LLMUtils._prepare_upload_image(
+                                str(img_src)
+                            )
+                            if not upload_src:
+                                continue
+                            image_urls.append(upload_src)
+                            if aliases:
+                                upload_aliases.update(aliases)
                             note_idx = len(image_urls)
                             basename = img_src
                             if isinstance(img_src, str):
@@ -390,6 +434,8 @@ class LLMUtils:
             uploaded_images.add(img_str)
             if img_str.startswith("file:///"):
                 uploaded_images.add(img_str[8:])
+        if upload_aliases:
+            uploaded_images.update(upload_aliases)
 
         final_system_prompt = "\n\n".join(system_parts)
 
