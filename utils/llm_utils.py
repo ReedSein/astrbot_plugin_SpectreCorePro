@@ -13,6 +13,7 @@ except ImportError:
 
 from .history_storage import HistoryStorage
 from .message_utils import MessageUtils
+from .image_caption import ImageCaptionUtils
 from astrbot.core.provider.entites import ProviderRequest
 from .persona_utils import PersonaUtils
 
@@ -36,15 +37,25 @@ class LLMUtils:
             value = getattr(component, attr, None)
             if not value:
                 continue
-            if isinstance(value, str):
-                if value.startswith("file:///"):
-                    file_path = value[8:]
-                    if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
-                        continue
-                elif os.path.exists(value):
-                    if os.path.getsize(value) <= 0:
-                        continue
-            return value
+            if not isinstance(value, str):
+                return value
+
+            if value.startswith("base64://"):
+                if len(value) > len("base64://"):
+                    return value
+                continue
+
+            if value.startswith(("http://", "https://")):
+                return value
+
+            if value.startswith("file:///"):
+                file_path = value[8:]
+                if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
+                    continue
+                return value
+
+            if os.path.exists(value) and os.path.getsize(value) > 0:
+                return value
         return None
 
     @staticmethod
@@ -52,18 +63,16 @@ class LLMUtils:
         aliases: set[str] = set()
         if not image or not isinstance(image, str):
             return None, aliases
-        if image.startswith("http"):
-            try:
-                from astrbot.core.utils.io import download_image_by_url
-                local_path = await download_image_by_url(image)
-            except Exception as e:
-                logger.warning(f"图片下载失败，已跳过: {image} ({e})")
+        if image.startswith("base64://"):
+            if len(image) <= len("base64://"):
                 return None, aliases
-            if (
-                not local_path
-                or not os.path.exists(local_path)
-                or os.path.getsize(local_path) <= 0
-            ):
+            aliases.add(image)
+            return image, aliases
+        if image.startswith("http"):
+            from .image_downloader import download_image_by_url_safe
+
+            local_path = await download_image_by_url_safe(image)
+            if not local_path:
                 logger.warning(f"图片下载为空，已跳过: {image}")
                 return None, aliases
             aliases.add(image)
