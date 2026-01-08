@@ -216,13 +216,10 @@ class ImageCaptionUtils:
         effective_image = image
         if isinstance(image, str) and image.startswith("http"):
             try:
-                from astrbot.core.utils.io import download_image_by_url
-                effective_image = await download_image_by_url(image)
-                if (
-                    not effective_image
-                    or not os.path.exists(effective_image)
-                    or os.path.getsize(effective_image) <= 0
-                ):
+                from .image_downloader import download_image_by_url_safe
+
+                effective_image = await download_image_by_url_safe(image)
+                if not effective_image:
                     logger.warning(f"图片转述跳过：下载为空 {image}")
                     return None
             except Exception as e:
