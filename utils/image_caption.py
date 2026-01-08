@@ -52,6 +52,19 @@ class ImageCaptionUtils:
         return os.path.join(path, f"{safe_chat}.json")
 
     @staticmethod
+    def _looks_like_error_text(text: str) -> bool:
+        lowered = text.lower()
+        if "invalid_argument" in lowered:
+            return True
+        if "http" in lowered and "error" in lowered:
+            return True
+        if "请求" in text and "失败" in text:
+            return True
+        if "错误详情" in text:
+            return True
+        return False
+
+    @staticmethod
     def _load_cache(path: str) -> Dict[str, Any]:
         if not os.path.exists(path): return {}
         try:
@@ -239,7 +252,22 @@ class ImageCaptionUtils:
             
             # 使用asyncio.wait_for添加超时控制
             llm_response = await asyncio.wait_for(call_llm(), timeout=timeout)
-            caption = llm_response.completion_text
+            caption = (llm_response.completion_text or "").strip()
+            role = getattr(llm_response, "role", "")
+            if role and role != "assistant":
+                short_caption = caption.replace("\n", " ").strip()
+                if len(short_caption) > 80:
+                    short_caption = short_caption[:80] + "..."
+                logger.warning(f"[SpectreCore] 图片转述失败({role}): {short_caption}")
+                return None
+            if not caption:
+                return None
+            if ImageCaptionUtils._looks_like_error_text(caption):
+                short_caption = caption.replace("\n", " ").strip()
+                if len(short_caption) > 80:
+                    short_caption = short_caption[:80] + "..."
+                logger.warning(f"[SpectreCore] 图片转述异常文本: {short_caption}")
+                return None
             
             # 缓存结果
             if caption:
