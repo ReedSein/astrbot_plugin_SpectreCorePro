@@ -42,8 +42,8 @@ class ReplyDecision:
             # ===========================================
             # 6. @检测 (最高优先级 - 强制回复)
             # ===========================================
-            if ReplyDecision._is_at_me(event):
-                logger.info(f"[SpectreCore] 触发：检测到被 @ (ChatID: {chat_id})")
+            if ReplyDecision._is_at_me(event) or ReplyDecision._is_reply_to_bot(event):
+                logger.info(f"[SpectreCore] 触发：检测到被 @ 或引用Bot (ChatID: {chat_id})")
                 return True
 
             # 7. 关键词检测
@@ -84,9 +84,18 @@ class ReplyDecision:
             return config.get("enabled_private", False)
         
         # 群聊检查：将所有 ID 转为字符串比对
-        group_id = str(event.get_group_id())
-        enabled_groups = [str(g) for g in config.get("enabled_groups", [])]
-        
+        group_id_raw = event.get_group_id()
+        if not group_id_raw:
+            return False
+        group_id = str(group_id_raw)
+        enabled_groups = {str(g) for g in config.get("enabled_groups", [])}
+        blocked_groups = {str(g) for g in config.get("blocked_groups", [])}
+
+        # 优先级: 黑名单 > 全局开关 > 白名单
+        if group_id in blocked_groups:
+            return False
+        if config.get("enable_all_groups", False):
+            return True
         return group_id in enabled_groups
 
     @staticmethod
@@ -113,6 +122,26 @@ class ReplyDecision:
             return False
         except Exception:
             return False
+
+    @staticmethod
+    def _is_reply_to_bot(event: AstrMessageEvent) -> bool:
+        if event.is_private_chat():
+            return True
+        bot_self_id = str(event.get_self_id() or "")
+        if not bot_self_id:
+            return False
+        try:
+            if hasattr(event.message_obj, "message"):
+                for comp in event.message_obj.message:
+                    if isinstance(comp, Reply):
+                        sender_id = getattr(comp, "sender_id", None)
+                        if sender_id in (None, 0, "0"):
+                            sender_id = getattr(comp, "qq", None)
+                        if sender_id is not None and str(sender_id) == bot_self_id:
+                            return True
+        except Exception:
+            return False
+        return False
 
     @staticmethod
     def _check_keywords(event: AstrMessageEvent, keywords: list) -> bool:
