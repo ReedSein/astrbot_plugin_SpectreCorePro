@@ -270,6 +270,8 @@ class SpectreCore(Star):
         texts = []
         imgs = []
         img_count = 0
+        from .utils.image_downloader import download_image_by_url_safe
+        import os
 
         for node in forward_data["messages"]:
             name = node.get("sender", {}).get("nickname", "未知")
@@ -291,11 +293,34 @@ class SpectreCore(Star):
                             t = sdata.get("text", "")
                             if t: parts.append(t)
                         elif stype == "image":
-                            url = sdata.get("url") or sdata.get("file")
-                            if url:
+                            src = sdata.get("url") or sdata.get("file")
+                            prepared: str | None = None
+                            if isinstance(src, str) and src:
+                                if src.startswith("base64://"):
+                                    if len(src) > len("base64://"):
+                                        prepared = src
+                                elif src.startswith(("http://", "https://")):
+                                    prepared = await download_image_by_url_safe(src)
+                                elif src.startswith("file:///"):
+                                    file_path = src[8:]
+                                    if (
+                                        os.path.exists(file_path)
+                                        and os.path.getsize(file_path) > 0
+                                    ):
+                                        prepared = src
+                                elif os.path.exists(src) and os.path.getsize(src) > 0:
+                                    prepared = src
+
+                            if prepared:
                                 img_count += 1
-                                imgs.append(url)
+                                imgs.append(prepared)
                                 parts.append(f"[图片{img_count}]")
+                            else:
+                                if src:
+                                    logger.warning(
+                                        f"[SpectreCore] 转发图片下载失败/为空，已跳过: {src}"
+                                    )
+                                parts.append("[图片(下载失败)]")
             
             full = "".join(parts).strip()
             if full: texts.append(f"{name}: {full}")
