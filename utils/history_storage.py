@@ -54,15 +54,25 @@ class HistoryStorage:
             value = getattr(component, attr, None)
             if not value:
                 continue
-            if isinstance(value, str):
-                if value.startswith("file:///"):
-                    file_path = value[8:]
-                    if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
-                        continue
-                elif os.path.exists(value):
-                    if os.path.getsize(value) <= 0:
-                        continue
-            return value
+            if not isinstance(value, str):
+                return value
+
+            if value.startswith("base64://"):
+                if len(value) > len("base64://"):
+                    return value
+                continue
+
+            if value.startswith(("http://", "https://")):
+                return value
+
+            if value.startswith("file:///"):
+                file_path = value[8:]
+                if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
+                    continue
+                return value
+
+            if os.path.exists(value) and os.path.getsize(value) > 0:
+                return value
         return None
     
     @staticmethod
@@ -277,12 +287,19 @@ class HistoryStorage:
                         file_ref = getattr(component, "file", "")
                         if isinstance(file_ref, str):
                             if file_ref.startswith("file:///"):
-                                temp_file_path = file_ref[8:]
+                                candidate = file_ref[8:]
+                                if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
+                                    temp_file_path = candidate
                             elif os.path.exists(file_ref):
-                                temp_file_path = file_ref
+                                if os.path.getsize(file_ref) > 0:
+                                    temp_file_path = file_ref
                         if not temp_file_path:
                             temp_file_path = await component.convert_to_file_path()
-                        if temp_file_path and os.path.exists(temp_file_path):
+                        if (
+                            temp_file_path
+                            and os.path.exists(temp_file_path)
+                            and os.path.getsize(temp_file_path) > 0
+                        ):
                             import uuid, shutil
                             ext = ".jpg"
                             if "." in temp_file_path:
