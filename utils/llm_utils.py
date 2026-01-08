@@ -34,8 +34,17 @@ class LLMUtils:
     def _get_image_src(component: Image) -> str | None:
         for attr in ("file", "url", "path"):
             value = getattr(component, attr, None)
-            if value:
-                return value
+            if not value:
+                continue
+            if isinstance(value, str):
+                if value.startswith("file:///"):
+                    file_path = value[8:]
+                    if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
+                        continue
+                elif os.path.exists(value):
+                    if os.path.getsize(value) <= 0:
+                        continue
+            return value
         return None
     
     @staticmethod
@@ -314,10 +323,15 @@ class LLMUtils:
 
         contexts = []
         try:
-            persona = await PersonaUtils.resolve_persona_v3(
-                context,
-                umo,
-            )
+            if hasattr(PersonaUtils, "resolve_persona_v3"):
+                persona = await PersonaUtils.resolve_persona_v3(
+                    context,
+                    umo,
+                )
+            else:
+                persona = await context.persona_manager.get_default_persona_v3(
+                    umo=umo
+                )
             if persona:
                 persona_prompt = persona.get("prompt", "")
                 mood_dialogs = persona.get("_mood_imitation_dialogs_processed", "")
