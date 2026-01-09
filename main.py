@@ -755,16 +755,7 @@ class SpectreCore(Star):
                     if cleaned_text:
                         result.chain.append(Comp.Plain(cleaned_text))
                 else:
-                    for comp in result.chain:
-                        if isinstance(comp, Comp.Plain):
-                            comp.text = UserDossierManager.TAG_PATTERN.sub(
-                                "", comp.text
-                            ).strip()
-                    result.chain = [
-                        comp
-                        for comp in result.chain
-                        if not (isinstance(comp, Comp.Plain) and not comp.text)
-                    ]
+                    UserDossierManager.strip_update_tags_in_chain(result.chain)
         except Exception as e:
             logger.error(f"Decorating result error: {e}")
 
