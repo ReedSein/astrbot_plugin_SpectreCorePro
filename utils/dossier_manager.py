@@ -284,9 +284,14 @@ class UserDossierManager:
     def has_incomplete_tag(cls, text: str) -> bool:
         if not text:
             return False
-        if cls.TAG_PATTERN.search(text):
+        open_cnt = len(cls.OPEN_TAG_PATTERN.findall(text))
+        close_cnt = len(cls.CLOSE_TAG_PATTERN.findall(text))
+        full_cnt = len(cls.TAG_PATTERN.findall(text))
+        if open_cnt == 0 and close_cnt == 0:
             return False
-        return bool(cls.OPEN_TAG_PATTERN.search(text) or cls.CLOSE_TAG_PATTERN.search(text))
+        if open_cnt != close_cnt:
+            return True
+        return full_cnt != open_cnt
 
     def _merge_updates(self, profile: Dict[str, Any], updates: Dict[str, Any]) -> bool:
         if not updates:
