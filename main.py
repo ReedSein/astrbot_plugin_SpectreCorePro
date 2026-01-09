@@ -717,21 +717,6 @@ class SpectreCore(Star):
                 logger.warning("[SpectreCore] 检测到档案更新标签不完整，触发重试。")
                 resp.completion_text = "error: dossier update tag incomplete"
                 return
-            
-            cleaned_text = text
-            try:
-                cleaned_text, changed, diff_msg = await self.dossier_manager.extract_and_update(
-                    str(event.get_sender_id() or ""),
-                    event.get_sender_name() or "用户",
-                    text,
-                )
-                if changed and diff_msg:
-                    logger.info(f"[SpectreCore] 档案更新: {diff_msg}")
-            except Exception as exc:
-                logger.error(f"解析用户档案标签失败: {exc}")
-                cleaned_text = UserDossierManager.TAG_PATTERN.sub("", text).strip()
-            
-            resp.completion_text = TextFilter.process_model_text(cleaned_text, self.config)
         except Exception as e:
             logger.error(f"处理大模型回复错误: {e}")
 
@@ -741,45 +726,45 @@ class SpectreCore(Star):
     async def on_decorating_result(self, event: AstrMessageEvent):
         try:
             result = event.get_result()
-            if result and result.is_llm_result():
-                if not result.chain:
-                    return
-                plain_text = "".join(
-                    [comp.text for comp in result.chain if isinstance(comp, Comp.Plain)]
+            if not result or not getattr(result, "chain", None):
+                return
+            plain_text = "".join(
+                [comp.text for comp in result.chain if isinstance(comp, Comp.Plain)]
+            )
+            if not plain_text:
+                return
+            # [Fix] 增强检测并正确停止事件，而不是清空结果导致下游插件崩溃
+            # 兼容中英文括号、空格、下划线变体
+            if re.search(r'(?i)[<＜]\s*NO[-_\s]*RESPONSE\s*[>＞]', plain_text):
+                logger.info("[SpectreCore] Decorating 阶段检测到 NO_RESPONSE (Robust)，停止事件传播")
+                event.stop_event()
+                return
+
+            if UserDossierManager.TAG_PATTERN.search(plain_text):
+                cleaned_text, changed, diff_msg = await self.dossier_manager.extract_and_update(
+                    str(event.get_sender_id() or ""),
+                    event.get_sender_name() or "用户",
+                    plain_text,
                 )
-                if not plain_text:
-                    return
-                # [Fix] 增强检测并正确停止事件，而不是清空结果导致下游插件崩溃
-                # 兼容中英文括号、空格、下划线变体
-                if re.search(r'(?i)[<＜]\s*NO[-_\s]*RESPONSE\s*[>＞]', plain_text):
-                    logger.info("[SpectreCore] Decorating 阶段检测到 NO_RESPONSE (Robust)，停止事件传播")
-                    event.stop_event()
-                    return
+                if changed and diff_msg:
+                    logger.info(f"[SpectreCore] 档案更新: {diff_msg}")
+                cleaned_text = TextFilter.process_model_text(cleaned_text, self.config)
 
-                if UserDossierManager.TAG_PATTERN.search(plain_text):
-                    cleaned_text, changed, diff_msg = await self.dossier_manager.extract_and_update(
-                        str(event.get_sender_id() or ""),
-                        event.get_sender_name() or "用户",
-                        plain_text,
-                    )
-                    if changed and diff_msg:
-                        logger.info(f"[SpectreCore] 档案更新: {diff_msg}")
-
-                    if all(isinstance(comp, Comp.Plain) for comp in result.chain):
-                        result.chain.clear()
-                        if cleaned_text:
-                            result.chain.append(Comp.Plain(cleaned_text))
-                    else:
-                        for comp in result.chain:
-                            if isinstance(comp, Comp.Plain):
-                                comp.text = UserDossierManager.TAG_PATTERN.sub(
-                                    "", comp.text
-                                ).strip()
-                        result.chain = [
-                            comp
-                            for comp in result.chain
-                            if not (isinstance(comp, Comp.Plain) and not comp.text)
-                        ]
+                if all(isinstance(comp, Comp.Plain) for comp in result.chain):
+                    result.chain.clear()
+                    if cleaned_text:
+                        result.chain.append(Comp.Plain(cleaned_text))
+                else:
+                    for comp in result.chain:
+                        if isinstance(comp, Comp.Plain):
+                            comp.text = UserDossierManager.TAG_PATTERN.sub(
+                                "", comp.text
+                            ).strip()
+                    result.chain = [
+                        comp
+                        for comp in result.chain
+                        if not (isinstance(comp, Comp.Plain) and not comp.text)
+                    ]
         except Exception as e:
             logger.error(f"Decorating result error: {e}")
 
