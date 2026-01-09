@@ -21,6 +21,14 @@ class UserDossierManager:
     )
     OPEN_TAG_PATTERN = re.compile(r"[<＜]\s*DOSSIER_UPDATE\b", re.IGNORECASE)
     CLOSE_TAG_PATTERN = re.compile(r"[<＜]/\s*DOSSIER_UPDATE\b", re.IGNORECASE)
+    OPEN_TAG_FULL_PATTERN = re.compile(
+        r"[<＜]\s*DOSSIER_UPDATE\s*[>＞]",
+        re.IGNORECASE,
+    )
+    CLOSE_TAG_FULL_PATTERN = re.compile(
+        r"[<＜]/\s*DOSSIER_UPDATE\s*[>＞]",
+        re.IGNORECASE,
+    )
     MAX_NAMES = 4
     MAX_RECENT = 5
     MAX_TABOO = 5
@@ -292,6 +300,70 @@ class UserDossierManager:
         if open_cnt != close_cnt:
             return True
         return full_cnt != open_cnt
+
+    @classmethod
+    def strip_update_tags_in_chain(cls, chain: list) -> bool:
+        try:
+            from astrbot.api import message_components as Comp
+        except Exception:
+            return False
+
+        if not chain:
+            return False
+
+        inside_tag = False
+        changed = False
+
+        for comp in chain:
+            if not isinstance(comp, Comp.Plain):
+                continue
+            text = comp.text or ""
+            if not text:
+                continue
+
+            new_parts = []
+            idx = 0
+            text_len = len(text)
+
+            while idx < text_len:
+                if inside_tag:
+                    close_match = cls.CLOSE_TAG_FULL_PATTERN.search(text, idx)
+                    if not close_match:
+                        changed = True
+                        idx = text_len
+                        break
+                    idx = close_match.end()
+                    inside_tag = False
+                    changed = True
+                    continue
+
+                open_match = cls.OPEN_TAG_FULL_PATTERN.search(text, idx)
+                if not open_match:
+                    new_parts.append(text[idx:])
+                    break
+
+                new_parts.append(text[idx:open_match.start()])
+                close_match = cls.CLOSE_TAG_FULL_PATTERN.search(
+                    text,
+                    open_match.end(),
+                )
+                if not close_match:
+                    inside_tag = True
+                    changed = True
+                    break
+                idx = close_match.end()
+                changed = True
+
+            comp.text = "".join(new_parts).strip()
+
+        if changed:
+            chain[:] = [
+                comp
+                for comp in chain
+                if not (isinstance(comp, Comp.Plain) and not comp.text)
+            ]
+
+        return changed
 
     def _merge_updates(self, profile: Dict[str, Any], updates: Dict[str, Any]) -> bool:
         if not updates:
