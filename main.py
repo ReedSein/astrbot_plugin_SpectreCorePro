@@ -454,7 +454,9 @@ class SpectreCore(Star):
                     platform_name = event.get_platform_name()
                     is_private = event.is_private_chat()
                     chat_id = event.get_group_id() if not is_private else event.get_sender_id()
-                    all_msgs = HistoryStorage.get_history(platform_name, is_private, chat_id)
+                    all_msgs = await HistoryStorage.get_history_async(
+                        platform_name, is_private, chat_id
+                    )
                     msg_limit = self.config.get("group_msg_history", 10)
                     bot_history_keep = self.config.get("bot_reply_history_count", 3)
                     image_processing_cfg = self.config.get("image_processing", {})
@@ -545,7 +547,6 @@ class SpectreCore(Star):
                     current_msg = stripped or current_msg
             
             instruction = ""
-            log_tag = ""
 
             if self._is_explicit_trigger(event):
                 # =======================================
@@ -558,7 +559,6 @@ class SpectreCore(Star):
                     except Exception as e:
                         logger.warning(f"[SpectreCore] 空@提示词格式化失败: {e}")
                         instruction = raw_prompt
-                    log_tag = "空@唤醒"
                 
                 # =======================================
                 # Branch A: 标准被动回复 (Passive Reply)
@@ -566,14 +566,12 @@ class SpectreCore(Star):
                 else:
                     template = self.config.get("passive_reply_instruction", self.DEFAULT_PASSIVE_INSTRUCTION)
                     instruction = self._format_instruction(template, event, current_msg, dossier_vars)
-                    log_tag = "被动回复"
             else:
                 # =======================================
                 # Branch C: 主动插话 (Active Reply)
                 # =======================================
                 template = self.config.get("active_speech_instruction", self.DEFAULT_ACTIVE_INSTRUCTION)
                 instruction = self._format_instruction(template, event, current_msg, dossier_vars)
-                log_tag = "主动插话"
 
             # [Robust Implementation] 强鲁棒性的 Prompt 组装与降级逻辑
             try:
