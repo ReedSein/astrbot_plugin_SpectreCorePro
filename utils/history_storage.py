@@ -1,9 +1,13 @@
+import asyncio
 import os
-import jsonpickle
-from typing import List
-from astrbot.api.all import *
+import random
 import time
-import traceback
+from typing import List
+
+import jsonpickle
+
+from astrbot.api.all import *
+
 from .image_caption import ImageCaptionUtils
 
 class HistoryStorage:
@@ -13,37 +17,74 @@ class HistoryStorage:
     
     config = None
     base_storage_path = None
+    _file_locks: dict[tuple[int, str], asyncio.Lock] = {}
     
     @staticmethod
     def init(config: AstrBotConfig):
         HistoryStorage.config = config
-        HistoryStorage.base_storage_path = os.path.join(os.getcwd(), "data", "chat_history")
+        HistoryStorage.base_storage_path = os.path.join(
+            os.getcwd(), "data", "chat_history"
+        )
+        HistoryStorage._file_locks.clear()
         HistoryStorage._ensure_dir(HistoryStorage.base_storage_path)
         logger.info(f"消息存储路径初始化: {HistoryStorage.base_storage_path}")
-        jsonpickle.set_encoder_options('json', ensure_ascii=False, indent=2)
-        jsonpickle.set_preferred_backend('json')
+        jsonpickle.set_encoder_options("json", ensure_ascii=False, indent=2)
+        jsonpickle.set_preferred_backend("json")
     
     @staticmethod
     def _ensure_dir(directory: str) -> None:
         if not os.path.exists(directory):
             os.makedirs(directory, exist_ok=True)
+
+    @staticmethod
+    def _get_file_lock(file_path: str) -> asyncio.Lock:
+        loop = asyncio.get_running_loop()
+        key = (id(loop), file_path)
+        lock = HistoryStorage._file_locks.get(key)
+        if lock is None:
+            lock = asyncio.Lock()
+            HistoryStorage._file_locks[key] = lock
+        return lock
+
+    @staticmethod
+    def _read_history_file(file_path: str) -> List[AstrBotMessage]:
+        if not os.path.exists(file_path):
+            return []
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                decoded = jsonpickle.decode(f.read())
+            return decoded if isinstance(decoded, list) else []
+        except Exception as e:
+            logger.error(f"读取消息历史记录失败: {e}")
+            return []
+
+    @staticmethod
+    def _write_history_file(file_path: str, history: List[AstrBotMessage]) -> None:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(jsonpickle.encode(history, unpicklable=True))
     
     @staticmethod
     def _get_storage_path(platform_name: str, is_private_chat: bool, chat_id: str) -> str:
         if not HistoryStorage.base_storage_path:
-            HistoryStorage.base_storage_path = os.path.join(os.getcwd(), "data", "chat_history")
+            HistoryStorage.base_storage_path = os.path.join(
+                os.getcwd(), "data", "chat_history"
+            )
             HistoryStorage._ensure_dir(HistoryStorage.base_storage_path)
-            
+
         chat_type = "private" if is_private_chat else "group"
-        directory = os.path.join(HistoryStorage.base_storage_path, platform_name, chat_type)
+        directory = os.path.join(
+            HistoryStorage.base_storage_path, platform_name, chat_type
+        )
         HistoryStorage._ensure_dir(directory)
         return os.path.join(directory, f"{chat_id}.json")
     
     @staticmethod
     def _sanitize_message(message: AstrBotMessage) -> AstrBotMessage:
         import copy
+
         sanitized_message = copy.copy(message)
-        for attr in ['_client', '_callback', '_handler', '_context', 'raw_message']:
+        for attr in ["_client", "_callback", "_handler", "_context", "raw_message"]:
             if hasattr(sanitized_message, attr):
                 setattr(sanitized_message, attr, None)
         return sanitized_message
@@ -79,8 +120,12 @@ class HistoryStorage:
     async def save_message(message: AstrBotMessage) -> bool:
         try:
             is_private_chat = not bool(message.group_id)
-            platform_name = message.platform_name if hasattr(message, "platform_name") else "unknown"
-            
+            platform_name = (
+                message.platform_name
+                if hasattr(message, "platform_name")
+                else "unknown"
+            )
+
             if is_private_chat:
                 if hasattr(message, "private_id") and message.private_id:
                     chat_id = message.private_id
@@ -88,10 +133,12 @@ class HistoryStorage:
                     chat_id = message.sender.user_id
             else:
                 chat_id = message.group_id
-                
-            file_path = HistoryStorage._get_storage_path(platform_name, is_private_chat, chat_id)
-            history = HistoryStorage.get_history(platform_name, is_private_chat, chat_id) or []
-            
+
+            file_path = HistoryStorage._get_storage_path(
+                platform_name, is_private_chat, chat_id
+            )
+            file_lock = HistoryStorage._get_file_lock(file_path)
+
             await HistoryStorage._process_image_persistence(message)
             # 后台调度图片转述（不阻塞）
             try:
@@ -102,25 +149,36 @@ class HistoryStorage:
                             if not img_src:
                                 continue
                             msg_ts = getattr(message, "timestamp", None)
-                            ImageCaptionUtils.schedule_caption(img_src, platform_name, is_private_chat, chat_id, msg_ts)
+                            ImageCaptionUtils.schedule_caption(
+                                img_src,
+                                platform_name,
+                                is_private_chat,
+                                chat_id,
+                                msg_ts,
+                            )
             except Exception:
                 pass
 
             sanitized_message = HistoryStorage._sanitize_message(message)
-            history.append(sanitized_message)
 
-            if len(history) > 200:
-                history = history[-200:]
+            async with file_lock:
+                history = await asyncio.to_thread(
+                    HistoryStorage._read_history_file, file_path
+                )
+                history.append(sanitized_message)
 
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(jsonpickle.encode(history, unpicklable=True))
+                if len(history) > 200:
+                    history = history[-200:]
 
-            import random
+                await asyncio.to_thread(
+                    HistoryStorage._write_history_file, file_path, history
+                )
+
             if random.random() < 0.05:
-                try: HistoryStorage._cleanup_old_images()
-                except: pass
+                try:
+                    await asyncio.to_thread(HistoryStorage._cleanup_old_images)
+                except Exception:
+                    pass
 
             return True
         except Exception as e:
@@ -151,7 +209,13 @@ class HistoryStorage:
                 if not HistoryStorage.config.get("enable_all_groups", False):
                     if group_id not in enabled_groups:
                         return
-            history = HistoryStorage.get_history(platform_name, is_private_chat, chat_id) or []
+            history = (
+                await HistoryStorage.get_history_async(
+                    platform_name,
+                    is_private_chat,
+                    chat_id,
+                )
+            ) or []
             if not history:
                 return
             recent = history[-max_scan:] if len(history) > max_scan else history
@@ -177,7 +241,11 @@ class HistoryStorage:
                                     if not img_src:
                                         continue
                                     ImageCaptionUtils.schedule_caption(
-                                        img_src, platform_name, is_private_chat, chat_id, msg_ts
+                                        img_src,
+                                        platform_name,
+                                        is_private_chat,
+                                        chat_id,
+                                        msg_ts,
                                     )
                 except Exception:
                     continue
@@ -186,7 +254,8 @@ class HistoryStorage:
     
     @staticmethod
     def is_chat_enabled(event: AstrMessageEvent) -> bool:
-        if not HistoryStorage.config: return False
+        if not HistoryStorage.config:
+            return False
         is_private = event.is_private_chat()
         if is_private:
             return HistoryStorage.config.get("enabled_private", False)
@@ -207,7 +276,8 @@ class HistoryStorage:
     async def process_and_save_user_message(event: AstrMessageEvent) -> None:
         if event.get_extra("incantation_command", False):
             return
-        if not HistoryStorage.is_chat_enabled(event): return
+        if not HistoryStorage.is_chat_enabled(event):
+            return
         message_obj = event.message_obj
         message_obj.platform_name = event.get_platform_name()
         await HistoryStorage.save_message(message_obj)
@@ -238,23 +308,36 @@ class HistoryStorage:
     @staticmethod
     async def save_bot_message_from_chain(chain: List[BaseMessageComponent], event: AstrMessageEvent) -> bool:
         try:
-            if not HistoryStorage.is_chat_enabled(event): return False
+            if not HistoryStorage.is_chat_enabled(event):
+                return False
             bot_msg = HistoryStorage.create_bot_message(chain, event)
             return await HistoryStorage.save_message(bot_msg)
         except Exception as e:
             logger.error(f"保存机器人消息失败: {e}")
             return False
+
+    @staticmethod
+    async def get_history_async(
+        platform_name: str,
+        is_private_chat: bool,
+        chat_id: str,
+    ) -> List[AstrBotMessage]:
+        file_path = HistoryStorage._get_storage_path(
+            platform_name, is_private_chat, chat_id
+        )
+        file_lock = HistoryStorage._get_file_lock(file_path)
+        async with file_lock:
+            return await asyncio.to_thread(
+                HistoryStorage._read_history_file,
+                file_path,
+            )
     
     @staticmethod
     def get_history(platform_name: str, is_private_chat: bool, chat_id: str) -> List[AstrBotMessage]:
-        try:
-            file_path = HistoryStorage._get_storage_path(platform_name, is_private_chat, chat_id)
-            if not os.path.exists(file_path): return []
-            with open(file_path, "r", encoding="utf-8") as f:
-                return jsonpickle.decode(f.read())
-        except Exception as e:
-            logger.error(f"读取消息历史记录失败: {e}")
-            return []
+        file_path = HistoryStorage._get_storage_path(
+            platform_name, is_private_chat, chat_id
+        )
+        return HistoryStorage._read_history_file(file_path)
     
     @staticmethod
     def clear_history(platform_name: str, is_private_chat: bool, chat_id: str) -> bool:
