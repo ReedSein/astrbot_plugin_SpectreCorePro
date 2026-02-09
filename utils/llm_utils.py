@@ -4,7 +4,6 @@ import time
 import datetime
 import threading
 import aiohttp
-import json
 import os
 try:
     from zoneinfo import ZoneInfo
@@ -340,7 +339,9 @@ class LLMUtils:
         
         all_msgs = []
         try:
-            all_msgs = HistoryStorage.get_history(platform_name, is_private, chat_id)
+            all_msgs = await HistoryStorage.get_history_async(
+                platform_name, is_private, chat_id
+            )
         except Exception as e:
             logger.error(f"获取历史失败: {e}")
 
