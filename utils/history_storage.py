@@ -1,14 +1,20 @@
 import asyncio
 import os
 import random
+import shutil
 import time
 from typing import List
 
 import jsonpickle
 
 from astrbot.api.all import *
+from astrbot.core.utils.astrbot_path import (
+    get_astrbot_data_path,
+    get_astrbot_plugin_data_path,
+)
 
 from .image_caption import ImageCaptionUtils
+from .image_ref import extract_image_src, normalize_image_ref
 
 class HistoryStorage:
     """
@@ -17,16 +23,58 @@ class HistoryStorage:
     
     config = None
     base_storage_path = None
+    legacy_base_storage_path = None
+    images_path = None
+    legacy_images_path = None
     _file_locks: dict[tuple[int, str], asyncio.Lock] = {}
+    _use_plugin_data_root = True
+    _keep_legacy_read_fallback = True
+    _migrate_legacy_once = True
+    _migration_done = False
     
     @staticmethod
     def init(config: AstrBotConfig):
         HistoryStorage.config = config
-        HistoryStorage.base_storage_path = os.path.join(
-            os.getcwd(), "data", "chat_history"
+        storage_cfg = config.get("storage", {})
+        HistoryStorage._use_plugin_data_root = bool(
+            storage_cfg.get("use_plugin_data_root", True)
+        )
+        HistoryStorage._keep_legacy_read_fallback = bool(
+            storage_cfg.get("keep_legacy_read_fallback", True)
+        )
+        HistoryStorage._migrate_legacy_once = bool(
+            storage_cfg.get("migrate_legacy_once", True)
+        )
+        HistoryStorage.legacy_base_storage_path = os.path.join(
+            get_astrbot_data_path(), "chat_history"
+        )
+        if HistoryStorage._use_plugin_data_root:
+            plugin_root = os.path.join(
+                get_astrbot_plugin_data_path(),
+                "spectrecorepro",
+            )
+            HistoryStorage.base_storage_path = os.path.join(plugin_root, "chat_history")
+            HistoryStorage.images_path = os.path.join(plugin_root, "images")
+        else:
+            HistoryStorage.base_storage_path = HistoryStorage.legacy_base_storage_path
+            HistoryStorage.images_path = os.path.join(
+                HistoryStorage.legacy_base_storage_path,
+                "images",
+            )
+        HistoryStorage.legacy_images_path = os.path.join(
+            HistoryStorage.legacy_base_storage_path,
+            "images",
         )
         HistoryStorage._file_locks.clear()
         HistoryStorage._ensure_dir(HistoryStorage.base_storage_path)
+        HistoryStorage._ensure_dir(HistoryStorage.images_path)
+        if (
+            HistoryStorage._use_plugin_data_root
+            and HistoryStorage._migrate_legacy_once
+            and not HistoryStorage._migration_done
+        ):
+            HistoryStorage._migrate_legacy_data()
+        HistoryStorage._migration_done = True
         logger.info(f"消息存储路径初始化: {HistoryStorage.base_storage_path}")
         jsonpickle.set_encoder_options("json", ensure_ascii=False, indent=2)
         jsonpickle.set_preferred_backend("json")
@@ -35,6 +83,47 @@ class HistoryStorage:
     def _ensure_dir(directory: str) -> None:
         if not os.path.exists(directory):
             os.makedirs(directory, exist_ok=True)
+
+    @staticmethod
+    def _copy_tree_if_missing(src_dir: str, dst_dir: str) -> None:
+        if not os.path.exists(src_dir):
+            return
+        for root, _dirs, files in os.walk(src_dir):
+            rel = os.path.relpath(root, src_dir)
+            target_root = dst_dir if rel == "." else os.path.join(dst_dir, rel)
+            os.makedirs(target_root, exist_ok=True)
+            for file_name in files:
+                src_file = os.path.join(root, file_name)
+                dst_file = os.path.join(target_root, file_name)
+                if os.path.exists(dst_file):
+                    continue
+                try:
+                    shutil.copy2(src_file, dst_file)
+                except Exception as e:
+                    logger.warning(f"迁移文件失败: {src_file} -> {dst_file} ({e})")
+
+    @staticmethod
+    def _migrate_legacy_data() -> None:
+        try:
+            legacy_root = HistoryStorage.legacy_base_storage_path
+            if not legacy_root or not os.path.exists(legacy_root):
+                return
+            if HistoryStorage.base_storage_path:
+                for item in os.listdir(legacy_root):
+                    if item in {"images", "image_captions"}:
+                        continue
+                    src = os.path.join(legacy_root, item)
+                    if not os.path.isdir(src):
+                        continue
+                    dst = os.path.join(HistoryStorage.base_storage_path, item)
+                    HistoryStorage._copy_tree_if_missing(src, dst)
+            if HistoryStorage.legacy_images_path and HistoryStorage.images_path:
+                HistoryStorage._copy_tree_if_missing(
+                    HistoryStorage.legacy_images_path,
+                    HistoryStorage.images_path,
+                )
+        except Exception as e:
+            logger.warning(f"迁移历史图片数据失败: {e}")
 
     @staticmethod
     def _get_file_lock(file_path: str) -> asyncio.Lock:
@@ -68,7 +157,9 @@ class HistoryStorage:
     def _get_storage_path(platform_name: str, is_private_chat: bool, chat_id: str) -> str:
         if not HistoryStorage.base_storage_path:
             HistoryStorage.base_storage_path = os.path.join(
-                os.getcwd(), "data", "chat_history"
+                get_astrbot_plugin_data_path(),
+                "spectrecorepro",
+                "chat_history",
             )
             HistoryStorage._ensure_dir(HistoryStorage.base_storage_path)
 
@@ -78,6 +169,25 @@ class HistoryStorage:
         )
         HistoryStorage._ensure_dir(directory)
         return os.path.join(directory, f"{chat_id}.json")
+
+    @staticmethod
+    def _get_legacy_storage_path(
+        platform_name: str,
+        is_private_chat: bool,
+        chat_id: str,
+    ) -> str:
+        if not HistoryStorage.legacy_base_storage_path:
+            HistoryStorage.legacy_base_storage_path = os.path.join(
+                get_astrbot_data_path(),
+                "chat_history",
+            )
+        chat_type = "private" if is_private_chat else "group"
+        return os.path.join(
+            HistoryStorage.legacy_base_storage_path,
+            platform_name,
+            chat_type,
+            f"{chat_id}.json",
+        )
     
     @staticmethod
     def _sanitize_message(message: AstrBotMessage) -> AstrBotMessage:
@@ -91,30 +201,18 @@ class HistoryStorage:
 
     @staticmethod
     def _get_image_src(component: Image) -> str | None:
-        for attr in ("file", "url", "path"):
-            value = getattr(component, attr, None)
-            if not value:
-                continue
-            if not isinstance(value, str):
-                return value
+        return extract_image_src(component)
 
-            if value.startswith("base64://"):
-                if len(value) > len("base64://"):
-                    return value
-                continue
-
-            if value.startswith(("http://", "https://")):
-                return value
-
-            if value.startswith("file:///"):
-                file_path = value[8:]
-                if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
-                    continue
-                return value
-
-            if os.path.exists(value) and os.path.getsize(value) > 0:
-                return value
-        return None
+    @staticmethod
+    def _is_managed_image_path(path_value: str) -> bool:
+        if not path_value or not HistoryStorage.images_path:
+            return False
+        try:
+            managed_root = os.path.abspath(HistoryStorage.images_path)
+            candidate = os.path.abspath(path_value)
+            return os.path.commonpath([managed_root, candidate]) == managed_root
+        except Exception:
+            return False
     
     @staticmethod
     async def save_message(message: AstrBotMessage) -> bool:
@@ -327,23 +425,60 @@ class HistoryStorage:
         )
         file_lock = HistoryStorage._get_file_lock(file_path)
         async with file_lock:
-            return await asyncio.to_thread(
+            history = await asyncio.to_thread(
                 HistoryStorage._read_history_file,
                 file_path,
             )
+        if history or not HistoryStorage._keep_legacy_read_fallback:
+            return history
+
+        legacy_path = HistoryStorage._get_legacy_storage_path(
+            platform_name, is_private_chat, chat_id
+        )
+        legacy_lock = HistoryStorage._get_file_lock(legacy_path)
+        async with legacy_lock:
+            legacy_history = await asyncio.to_thread(
+                HistoryStorage._read_history_file,
+                legacy_path,
+            )
+        if legacy_history and not os.path.exists(file_path):
+            async with file_lock:
+                await asyncio.to_thread(
+                    HistoryStorage._write_history_file,
+                    file_path,
+                    legacy_history,
+                )
+        return legacy_history
     
     @staticmethod
     def get_history(platform_name: str, is_private_chat: bool, chat_id: str) -> List[AstrBotMessage]:
         file_path = HistoryStorage._get_storage_path(
             platform_name, is_private_chat, chat_id
         )
-        return HistoryStorage._read_history_file(file_path)
+        history = HistoryStorage._read_history_file(file_path)
+        if history or not HistoryStorage._keep_legacy_read_fallback:
+            return history
+        legacy_path = HistoryStorage._get_legacy_storage_path(
+            platform_name, is_private_chat, chat_id
+        )
+        legacy_history = HistoryStorage._read_history_file(legacy_path)
+        if legacy_history and not os.path.exists(file_path):
+            HistoryStorage._write_history_file(file_path, legacy_history)
+        return legacy_history
     
     @staticmethod
     def clear_history(platform_name: str, is_private_chat: bool, chat_id: str) -> bool:
         try:
-            file_path = HistoryStorage._get_storage_path(platform_name, is_private_chat, chat_id)
-            if os.path.exists(file_path): os.remove(file_path)
+            file_path = HistoryStorage._get_storage_path(
+                platform_name, is_private_chat, chat_id
+            )
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            legacy_path = HistoryStorage._get_legacy_storage_path(
+                platform_name, is_private_chat, chat_id
+            )
+            if os.path.exists(legacy_path):
+                os.remove(legacy_path)
             return True
         except Exception as e:
             logger.error(f"清空消息历史记录失败: {e}")
@@ -358,19 +493,23 @@ class HistoryStorage:
             if not cfg.get("enable_image_persistence", True): return
             if not hasattr(message, 'message') or not message.message: return
 
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-            images_dir = os.path.join(get_astrbot_data_path(), "chat_history", "images")
+            images_dir = HistoryStorage.images_path or os.path.join(
+                get_astrbot_data_path(), "chat_history", "images"
+            )
             HistoryStorage._ensure_dir(images_dir)
 
             for component in message.message:
                 if isinstance(component, Image):
-                    if component.file and component.file.startswith("file:///") and "/images/" in component.file: continue
+                    file_ref = getattr(component, "file", "")
+                    if isinstance(file_ref, str) and file_ref.startswith("file:///"):
+                        normalized_ref = normalize_image_ref(file_ref)
+                        if HistoryStorage._is_managed_image_path(normalized_ref):
+                            continue
                     try:
                         temp_file_path = None
-                        file_ref = getattr(component, "file", "")
                         if isinstance(file_ref, str):
                             if file_ref.startswith("file:///"):
-                                candidate = file_ref[8:]
+                                candidate = normalize_image_ref(file_ref)
                                 if os.path.exists(candidate) and os.path.getsize(candidate) > 0:
                                     temp_file_path = candidate
                             elif os.path.exists(file_ref):
@@ -383,7 +522,7 @@ class HistoryStorage:
                             and os.path.exists(temp_file_path)
                             and os.path.getsize(temp_file_path) > 0
                         ):
-                            import uuid, shutil
+                            import uuid
                             ext = ".jpg"
                             if "." in temp_file_path:
                                 original_ext = os.path.splitext(temp_file_path)[1].lower()
@@ -393,11 +532,12 @@ class HistoryStorage:
                             fname = f"{uuid.uuid4().hex}{ext}"
                             dest = os.path.join(images_dir, fname)
                             shutil.copy2(temp_file_path, dest)
-                            abs_dest = os.path.abspath(dest)
-                            abs_dest = abs_dest.replace("\\", "/")
+                            abs_dest = normalize_image_ref(dest)
                             component.file = f"file:///{abs_dest}"
-                    except: pass
-        except: pass
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     @staticmethod
     def _cleanup_old_images() -> None:
@@ -408,8 +548,9 @@ class HistoryStorage:
             if not cfg.get("enable_image_persistence", True): return
             
             days = cfg.get("image_retention_days", 7)
-            from astrbot.core.utils.astrbot_path import get_astrbot_data_path
-            images_dir = os.path.join(get_astrbot_data_path(), "chat_history", "images")
+            images_dir = HistoryStorage.images_path or os.path.join(
+                get_astrbot_data_path(), "chat_history", "images"
+            )
             if not os.path.exists(images_dir): return
             
             thresh = days * 24 * 3600
@@ -417,6 +558,9 @@ class HistoryStorage:
             for fname in os.listdir(images_dir):
                 fpath = os.path.join(images_dir, fname)
                 if os.path.isfile(fpath) and now - os.path.getctime(fpath) > thresh:
-                    try: os.remove(fpath)
-                    except: pass
-        except: pass
+                    try:
+                        os.remove(fpath)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
