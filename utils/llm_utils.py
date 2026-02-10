@@ -15,6 +15,7 @@ from .message_utils import MessageUtils
 from .image_caption import ImageCaptionUtils
 from astrbot.core.provider.entites import ProviderRequest
 from .persona_utils import PersonaUtils
+from .image_ref import build_image_aliases, extract_image_src, normalize_image_ref
 
 class LLMUtils:
     """
@@ -32,64 +33,50 @@ class LLMUtils:
 
     @staticmethod
     def _get_image_src(component: Image) -> str | None:
-        for attr in ("file", "url", "path"):
-            value = getattr(component, attr, None)
-            if not value:
-                continue
-            if not isinstance(value, str):
-                return value
-
-            if value.startswith("base64://"):
-                if len(value) > len("base64://"):
-                    return value
-                continue
-
-            if value.startswith(("http://", "https://")):
-                return value
-
-            if value.startswith("file:///"):
-                file_path = value[8:]
-                if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
-                    continue
-                return value
-
-            if os.path.exists(value) and os.path.getsize(value) > 0:
-                return value
-        return None
+        return extract_image_src(component)
 
     @staticmethod
-    async def _prepare_upload_image(image: str) -> tuple[str | None, set[str]]:
+    async def _prepare_upload_image(
+        image: str,
+        download_cache: dict[str, str] | None = None,
+    ) -> tuple[str | None, set[str], str]:
         aliases: set[str] = set()
+        image_key = normalize_image_ref(image) if isinstance(image, str) else str(image)
         if not image or not isinstance(image, str):
-            return None, aliases
+            return None, aliases, image_key
+        aliases.update(build_image_aliases(image))
         if image.startswith("base64://"):
             if len(image) <= len("base64://"):
-                return None, aliases
-            aliases.add(image)
-            return image, aliases
+                return None, aliases, image_key
+            return image, aliases, image_key
         if image.startswith("http"):
             from .image_downloader import download_image_by_url_safe
 
-            local_path = await download_image_by_url_safe(image)
+            local_path = None
+            if download_cache is not None:
+                local_path = download_cache.get(image)
+            if not local_path:
+                local_path = await download_image_by_url_safe(image)
+                if local_path and download_cache is not None:
+                    download_cache[image] = local_path
             if not local_path:
                 logger.warning(f"图片下载为空，已跳过: {image}")
-                return None, aliases
-            aliases.add(image)
-            aliases.add(local_path)
-            return local_path, aliases
+                return None, aliases, image_key
+            aliases.update(build_image_aliases(local_path))
+            return local_path, aliases, image_key
         if image.startswith("file:///"):
-            file_path = image[8:]
+            file_path = normalize_image_ref(image)
             if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
-                return None, aliases
-            aliases.add(image)
-            aliases.add(file_path)
-            return image, aliases
+                return None, aliases, image_key
+            aliases.update(build_image_aliases(file_path))
+            return image, aliases, normalize_image_ref(file_path)
         if os.path.exists(image):
             if os.path.getsize(image) <= 0:
-                return None, aliases
-            aliases.add(image)
-            return image, aliases
-        return image, aliases
+                return None, aliases, image_key
+            normalized = normalize_image_ref(image)
+            aliases.update(build_image_aliases(normalized))
+            return image, aliases, normalized
+        return image, aliases, image_key
     
     @staticmethod
     def get_chat_key(platform_name: str, is_private_chat: bool, chat_id: str) -> str:
@@ -407,6 +394,8 @@ class LLMUtils:
         image_urls = []
         image_notes = []
         upload_aliases: set[str] = set()
+        seen_image_keys: set[str] = set()
+        download_cache: dict[str, str] = {}
         img_check_count = image_processing_cfg.get("image_count", 0)
         
         if img_check_count > 0 and all_msgs:
@@ -419,18 +408,24 @@ class LLMUtils:
                             img_src = LLMUtils._get_image_src(comp)
                             if not img_src:
                                 continue
-                            upload_src, aliases = await LLMUtils._prepare_upload_image(
-                                str(img_src)
+                            upload_src, aliases, image_key = await LLMUtils._prepare_upload_image(
+                                str(img_src),
+                                download_cache=download_cache,
                             )
                             if not upload_src:
                                 continue
+                            if image_key in seen_image_keys:
+                                if aliases:
+                                    upload_aliases.update(aliases)
+                                continue
+                            seen_image_keys.add(image_key)
                             image_urls.append(upload_src)
                             if aliases:
                                 upload_aliases.update(aliases)
                             note_idx = len(image_urls)
                             basename = img_src
                             if isinstance(img_src, str):
-                                basename = os.path.basename(img_src)
+                                basename = os.path.basename(normalize_image_ref(img_src))
                             note_name = basename or f"img_{note_idx}"
                             image_notes.append(f"图片{note_idx}({note_name})")
                             if len(image_urls) >= img_check_count: break
