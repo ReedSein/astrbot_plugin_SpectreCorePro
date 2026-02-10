@@ -157,7 +157,7 @@
                 "description": "持久化图片转述缓存",
                 "type": "bool",
                 "default": true,
-                "hint": "开启后将在 data/chat_history/image_captions 下缓存图片转述结果，避免重复调用模型。"
+                "hint": "开启后缓存图片转述结果（默认写入 data/plugin_data/spectrecorepro/image_captions，可通过 storage 配置切回旧目录）。"
             },
             "caption_cache_days": {
                 "description": "转述缓存保留天数",
@@ -186,7 +186,32 @@
             "enable_image_persistence": {
                 "description": "启用图片本地缓存",
                 "type": "bool",
-                "default": true
+                "default": true,
+                "hint": "开启后会将图片持久化到插件数据目录（默认 data/plugin_data/spectrecorepro/images）。"
+            }
+        }
+    },
+    "storage": {
+        "description": "图片与历史存储策略",
+        "type": "object",
+        "items": {
+            "use_plugin_data_root": {
+                "description": "使用插件专属存储目录",
+                "type": "bool",
+                "default": true,
+                "hint": "开启后使用 data/plugin_data/spectrecorepro 作为历史/图片/转述缓存根目录。"
+            },
+            "migrate_legacy_once": {
+                "description": "启动时迁移旧数据",
+                "type": "bool",
+                "default": true,
+                "hint": "将 data/chat_history 下旧数据复制迁移到插件专属目录（幂等）。"
+            },
+            "keep_legacy_read_fallback": {
+                "description": "保留旧目录读取回退",
+                "type": "bool",
+                "default": true,
+                "hint": "新目录未命中时，回退读取 data/chat_history 下旧数据。"
             }
         }
     },
