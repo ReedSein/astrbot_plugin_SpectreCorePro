@@ -1,12 +1,9 @@
 from astrbot.api.all import *
-from typing import List, Dict, Any
+from typing import List, Dict
 import os
-import time
 from datetime import datetime
 from .image_caption import ImageCaptionUtils
-import asyncio
-import json
-import traceback
+from .image_ref import build_image_aliases, extract_image_src, normalize_image_ref
 
 class MessageUtils:
     """
@@ -15,30 +12,7 @@ class MessageUtils:
         
     @staticmethod
     def _get_image_src(component: Image) -> str | None:
-        for attr in ("file", "url", "path"):
-            value = getattr(component, attr, None)
-            if not value:
-                continue
-            if not isinstance(value, str):
-                return value
-
-            if value.startswith("base64://"):
-                if len(value) > len("base64://"):
-                    return value
-                continue
-
-            if value.startswith(("http://", "https://")):
-                return value
-
-            if value.startswith("file:///"):
-                file_path = value[8:]
-                if not os.path.exists(file_path) or os.path.getsize(file_path) <= 0:
-                    continue
-                return value
-
-            if os.path.exists(value) and os.path.getsize(value) > 0:
-                return value
-        return None
+        return extract_image_src(component)
 
     @staticmethod
     async def format_history_for_llm(
@@ -131,6 +105,10 @@ class MessageUtils:
                         i,
                         uploaded_images=uploaded_images,
                         counter=idx_ref,
+                        image_caption=image_caption,
+                        platform_name=platform_name,
+                        is_private=is_private,
+                        chat_id=chat_id,
                     )
                     continue
                 elif component_type == "plain" or isinstance(i, Plain):
@@ -144,19 +122,14 @@ class MessageUtils:
                             raw_image = image
                             is_uploaded = False
                             if uploaded_images:
-                                is_uploaded = raw_image in uploaded_images
-                                if (
-                                    not is_uploaded
-                                    and isinstance(raw_image, str)
-                                    and raw_image.startswith("file:///")
-                                ):
-                                    is_uploaded = raw_image[8:] in uploaded_images
+                                aliases = build_image_aliases(str(raw_image))
+                                is_uploaded = any(alias in uploaded_images for alias in aliases)
                             if is_uploaded:
                                 outline += f"{tag} 已上传]"
                                 continue
                             if image_caption:
                                 if isinstance(image, str) and image.startswith("file:///"):
-                                    image_path = image[8:]
+                                    image_path = normalize_image_ref(image)
                                     if not os.path.exists(image_path):
                                         outline += f"{tag}: 文件过期]"
                                         continue
@@ -164,7 +137,7 @@ class MessageUtils:
                                 # 优先命中缓存，未命中则调度后台转述
                                 caption = ImageCaptionUtils.get_cached_caption(
                                     image, platform_name, is_private, chat_id
-                                ) or ImageCaptionUtils.caption_cache.get(image)
+                                ) or ImageCaptionUtils.get_memory_caption(image)
                                 if caption:
                                     outline += f"{tag}: {caption}]"
                                 else:
@@ -199,6 +172,10 @@ class MessageUtils:
         reply_component: Reply,
         uploaded_images: set[str] | None = None,
         counter: Dict[str, int] | None = None,
+        image_caption: bool = True,
+        platform_name: str = "",
+        is_private: bool = False,
+        chat_id: str = "",
     ) -> str:
         try:
             sender_id = getattr(reply_component, 'sender_id', '')
@@ -211,10 +188,10 @@ class MessageUtils:
                 reply_content = await MessageUtils.outline_message_list(
                     reply_component.chain,
                     counter=counter,
-                    image_caption=True,
-                    platform_name="",
-                    is_private=False,
-                    chat_id="",
+                    image_caption=image_caption,
+                    platform_name=platform_name,
+                    is_private=is_private,
+                    chat_id=chat_id,
                     uploaded_images=uploaded_images,
                 )
             elif hasattr(reply_component, 'message_str') and reply_component.message_str:
@@ -226,7 +203,8 @@ class MessageUtils:
             
             if len(reply_content) > 150: reply_content = reply_content[:150] + "..."
             return f"「↪ 引用消息 {sender_info}：{reply_content}」"
-        except: return "[回复消息]"
+        except Exception:
+            return "[回复消息]"
 
     @staticmethod
     def _count_images_in_message_list(
