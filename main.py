@@ -123,8 +123,24 @@ class SpectreCore(Star):
                 yield result
         except Exception as e:
             logger.error(f"处理私聊消息错误: {e}")
+
+    def _is_temp_muted(self) -> bool:
+        mute_info = self.config.get("_temp_mute", {})
+        if not isinstance(mute_info, dict):
+            return False
+        until = mute_info.get("until", 0)
+        try:
+            return float(until) > time.time()
+        except (TypeError, ValueError):
+            return False
             
     async def _process_message(self, event: AstrMessageEvent):
+        # 静默期间仅保留归档与图片转述调度，禁止默认 LLM 链路。
+        if self._is_temp_muted():
+            await HistoryStorage.process_and_save_user_message(event)
+            event.should_call_llm(True)
+            return
+
         # 1. Forward Analysis
         if self.enable_forward_analysis and IS_AIOCQHTTP:
             handled = False
